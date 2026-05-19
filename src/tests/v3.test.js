@@ -73,6 +73,13 @@ function runCli(root, args) {
   });
 }
 
+function runCliNoRoot(cwd, args) {
+  return spawnSync(process.execPath, [CLI_PATH, ...args], {
+    cwd,
+    encoding: 'utf8',
+  });
+}
+
 async function makeFixture() {
   const root = await mkdtemp(join(tmpdir(), 'sf3-test-'));
   // Minimal structure — tests set up what they need via setup helpers
@@ -481,6 +488,74 @@ describe('CLI integration v4', () => {
     assert.ok(systemDoc.includes('## Accessibility Rules'));
   });
 
+  test('guide command recommends first-run path in an uninitialized repository', async () => {
+    const emptyRoot = await mkdtemp(join(tmpdir(), 'sf3-guide-empty-'));
+    const result = runCli(emptyRoot, ['guide']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = result.stdout + result.stderr;
+    assert.match(output, /specfuse init/i);
+    assert.match(output, /specfuse plan prd/i);
+    assert.match(output, /specfuse specify init/i);
+    await rm(emptyRoot, { recursive: true, force: true });
+  });
+
+  test('guide command gives corrective steps for partial planning setup', async () => {
+    await setupPlan(root, { arch: true, prd: false });
+    const result = runCli(root, ['guide']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = result.stdout + result.stderr;
+    assert.match(output, /Missing baseline artifacts/i);
+    assert.match(output, /specfuse plan prd/i);
+    assert.match(output, /specfuse specify init/i);
+    assert.match(output, /specfuse sync/i);
+  });
+
+  test('guide warns when root is not a git repository', () => {
+    const result = runCli(root, ['guide']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stderr + result.stdout, /No \.git directory found/i);
+  });
+
+  test('guide command in initialized workspace does not suggest init again', () => {
+    const result = runCli(root, ['guide']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = result.stdout + result.stderr;
+    assert.doesNotMatch(output, /specfuse init/i);
+    assert.match(output, /specfuse plan prd/i);
+  });
+
+  test('guide command supports machine-readable JSON output', () => {
+    const result = runCli(root, ['guide', '--json']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.persona, 'new-user');
+    assert.equal(typeof parsed.focus, 'string');
+    assert.ok(Array.isArray(parsed.steps));
+    assert.ok(parsed.steps.length > 0);
+    assert.equal(parsed.isGitRepo, false);
+  });
+
+  test('guide reports invalid persona instead of silently hiding fallback', () => {
+    const textResult = runCli(root, ['guide', '--persona', 'pm']);
+    assert.equal(textResult.status, 0, textResult.stderr || textResult.stdout);
+    assert.match(textResult.stderr + textResult.stdout, /Unknown persona 'pm'/i);
+
+    const jsonResult = runCli(root, ['guide', '--json', '--persona', 'pm']);
+    assert.equal(jsonResult.status, 0, jsonResult.stderr || jsonResult.stdout);
+    const parsed = JSON.parse(jsonResult.stdout);
+    assert.equal(parsed.persona, 'new-user');
+    assert.equal(parsed.personaValid, false);
+  });
+
+  test('guide prioritizes setup recovery when changes exist but constitution is missing', () => {
+    const result = runCli(root, ['guide']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = result.stdout + result.stderr;
+    assert.match(output, /specfuse specify init/i);
+    assert.match(output, /specfuse sync/i);
+    assert.doesNotMatch(output, /specfuse change review/i);
+  });
+
   test('change review and verify commands generate artifacts through the CLI', async () => {
     await writeFile(join(root, '.specfuse', 'constitution.md'), '# Project Constitution\n\n## Accessibility Rules\n- Touch target 44×44px\n');
     await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart can add items\n- [ ] Cart can remove items\n`);
@@ -510,5 +585,32 @@ describe('CLI integration v4', () => {
     const archiveRoot = join(root, '.specfuse', 'changes', 'archive');
     const entries = await readdir(archiveRoot, { withFileTypes: true });
     assert.ok(entries.some(entry => entry.isDirectory() && entry.name.endsWith('add-cart')));
+  });
+
+  test('unknown command suggests closest valid command', () => {
+    const result = runCliNoRoot(root, ['stauts']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr + result.stdout, /Did you mean:[\s\S]*specfuse status/i);
+  });
+
+  test('unknown nested subcommand suggests the closest match', () => {
+    const result = runCli(root, ['plan', 'stry']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr + result.stdout, /Did you mean:[\s\S]*specfuse plan story/i);
+  });
+
+  test('unknown option typo suggests closest valid option', () => {
+    const result = runCli(root, ['guide', '--persna', 'qa']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr + result.stdout, /--persona/i);
+  });
+
+  test('discoverability aliases work for list and drift checks', () => {
+    const planList = runCli(root, ['plan', 'ls']);
+    const changeList = runCli(root, ['change', 'ls']);
+    const driftCheck = runCli(root, ['check']);
+    assert.equal(planList.status, 0, planList.stderr || planList.stdout);
+    assert.equal(changeList.status, 0, changeList.stderr || changeList.stdout);
+    assert.equal(driftCheck.status, 0, driftCheck.stderr || driftCheck.stdout);
   });
 });

@@ -2,6 +2,7 @@ import { join }     from 'path';
 import { pathExists, writeFileAtomic, ensureDir } from '../utils/fs.js';
 import { Registry } from '../core/registry.js';
 import { detectPhase, describePhase } from '../core/phase-detector.js';
+import { getPhaseAdvice } from '../core/workflow-advice.js';
 import { logger }   from '../utils/logger.js';
 import chalk from 'chalk';
 import { basename } from 'path';
@@ -84,7 +85,7 @@ export async function initCommand(projectRoot, options = {}) {
   logger.success('Directory structure:');
   console.log(chalk.dim([
     '  .specfuse/',
-    '  ├── constitution.md   ← single source of truth',
+    '  ├── constitution.md   ← created by `specfuse specify init`',
     '  ├── plan/             ← planning artifacts (PRD, architecture, design, stories)',
     '  │   ├── design/       ← design system, flows, and screen specs',
     '  ├── changes/          ← active change proposals',
@@ -95,19 +96,12 @@ export async function initCommand(projectRoot, options = {}) {
 
   logger.br();
   logger.header('Getting Started');
-  if (phase === 'planning' || phase === 'unknown') {
-    logger.info(`1. ${chalk.cyan('specfuse plan prd')}         Create your PRD`);
-    logger.info(`2. ${chalk.cyan('specfuse plan arch')}        Create your architecture doc`);
-    logger.info(`3. ${chalk.cyan('specfuse plan design system')} Create your design system constraints`);
-    logger.info(`4. ${chalk.cyan('specfuse specify init')}     Generate constitution.md from plan`);
-    logger.info(`5. ${chalk.cyan('specfuse sync')}             Sync all artifacts`);
-  } else if (phase === 'feature-dev') {
-    logger.info(`1. ${chalk.cyan('specfuse change new <n>')} Start a change proposal`);
-    logger.info(`2. ${chalk.cyan('specfuse sync')}              Inject constitutional constraints`);
-    logger.info(`3. ${chalk.cyan('specfuse watch')}             Live auto-sync during development`);
-  } else {
-    logger.info(`1. ${chalk.cyan('specfuse change archive <n>')}   Archive completed changes`);
-    logger.info(`2. ${chalk.cyan('specfuse sync')}                  Update implemented-features`);
-  }
+  const advicePhase = phase === 'unknown' ? 'planning' : phase;
+  const advice = getPhaseAdvice(advicePhase);
+  advice.steps.forEach((step, index) => {
+    logger.info(`${index + 1}. ${chalk.cyan(step.command)}  ${chalk.dim(step.reason)}`);
+  });
+  logger.br();
+  logger.info(`Need a phase-aware walkthrough? Run ${chalk.cyan('specfuse guide --persona new-user')}`);
   logger.br();
 }

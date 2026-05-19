@@ -63,16 +63,12 @@ specfuse
 
 ```bash
 specfuse init --name "My Project"
-specfuse plan prd --name "My Project"
-specfuse plan arch
-specfuse plan design system
-specfuse plan story "User login"
-specfuse specify init
-specfuse sync
-specfuse change new "add-login"
-specfuse sync
-specfuse drift
+specfuse plan prd && specfuse plan arch
+specfuse specify init && specfuse sync
 ```
+
+Use `specfuse guide --persona <new-user|planner|developer|qa>` (or `specfuse start`) any time to get phase-aware next steps tailored to your role.
+Add `--json` when you want machine-readable onboarding guidance for editor/agent workflows.
 
 ## Workflow overview
 
@@ -96,7 +92,7 @@ This scaffolds the internal workspace layout:
 │   └── stories/
 ├── changes/
 │   └── archive/
-├── constitution.md
+├── constitution.md      (created by `specfuse specify init`)
 ├── registry.json
 └── rules.mjs
 ```
@@ -193,6 +189,7 @@ Each active change is a directory containing:
 ### Core
 
 - `specfuse init`
+- `specfuse guide`
 - `specfuse sync`
 - `specfuse diff`
 - `specfuse drift`
@@ -201,6 +198,13 @@ Each active change is a directory containing:
 - `specfuse doctor`
 - `specfuse install-hooks`
 - `specfuse uninstall-hooks`
+
+Handy aliases:
+
+- `specfuse start` → `specfuse guide`
+- `specfuse check` → `specfuse drift`
+- `specfuse plan ls` → `specfuse plan list`
+- `specfuse change ls` → `specfuse change list`
 
 ### Planning
 

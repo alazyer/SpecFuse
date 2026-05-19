@@ -1,5 +1,6 @@
-import { pathExists, listFiles } from '../utils/fs.js';
+import { pathExists } from '../utils/fs.js';
 import { join } from 'path';
+import { getPhaseAdvice } from './workflow-advice.js';
 
 /**
  * Detect development phase from .specfuse/ directory structure.
@@ -60,10 +61,5 @@ export function describePhase(phase) {
 
 /** @param {string} phase @returns {string} */
 export function recommendedAction(phase) {
-  return {
-    planning:      'Run `specfuse specify init` to generate constitution.md from your plan, then `specfuse sync`',
-    'feature-dev': 'Run `specfuse change new <name>` to start a change proposal, then `specfuse watch`',
-    maintenance:   'Run `specfuse change archive <name>` when a change is done, then `specfuse sync`',
-    unknown:       'Run `specfuse init` to start a new project or import an existing one',
-  }[phase] ?? 'Run `specfuse init`';
+  return getPhaseAdvice(phase).statusAction;
 }

@@ -1,6 +1,7 @@
 import { Command }        from 'commander';
 import { resolve }        from 'path';
 import { createRequire }  from 'module';
+import chalk from 'chalk';
 
 import { initCommand }   from './commands/init.js';
 import { statusCommand } from './commands/status.js';
@@ -10,6 +11,7 @@ import { diffCommand }   from './commands/diff.js';
 import { watchCommand }  from './commands/watch.js';
 import { doctorCommand } from './commands/doctor.js';
 import { installHooksCommand, uninstallHooksCommand } from './commands/install-hooks.js';
+import { guideCommand } from './commands/guide.js';
 
 // Plan commands (replaces BMAD)
 import { planPrd, planArch, planStory, planList, planDesignSystem, planDesignFlow, planDesignScreen, planDesignList } from './commands/plan/index.js';
@@ -36,9 +38,60 @@ program
   .version(pkg.version)
   .option('-d, --debug', 'Enable debug output', false)
   .hook('preAction', cmd => { if (cmd.opts().debug) logger.enableDebug(); });
+program.showSuggestionAfterError(true);
 
 const rootOpt    = ['--root <path>', 'Project root directory', '.'];
 const pluginsOpt = ['--allow-plugins', 'Allow user plugin rules in CI', false];
+
+function levenshtein(a, b) {
+  const left = String(a ?? '');
+  const right = String(b ?? '');
+  const dp = Array.from({ length: left.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= right.length; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= left.length; i++) {
+    for (let j = 1; j <= right.length; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[left.length][right.length];
+}
+
+function suggestCommands(input, candidates) {
+  const source = String(input ?? '').trim().toLowerCase();
+  if (!source) return [];
+
+  const ranked = candidates
+    .filter(Boolean)
+    .map(c => String(c).trim())
+    .map(cmd => ({ cmd, score: levenshtein(source, cmd.toLowerCase()) }))
+    .sort((a, b) => a.score - b.score || a.cmd.localeCompare(b.cmd));
+
+  const threshold = Math.max(2, Math.floor(source.length / 2));
+  return ranked.filter(item => item.score <= threshold).slice(0, 3).map(item => item.cmd);
+}
+
+function bindUnknownCommandHandler(command, prefix) {
+  command.on('command:*', function ([cmd]) {
+    logger.error(`Unknown command: ${cmd}`);
+    const candidates = this.commands.map(c => c.name());
+    const suggestions = suggestCommands(cmd, candidates);
+    if (suggestions.length > 0) {
+      logger.info(`Did you mean: ${suggestions.map(s => chalk.cyan(`${prefix} ${s}`)).join(chalk.dim(' | '))}`);
+    }
+    logger.info('Run `specfuse --help` to see available commands.');
+    process.exit(1);
+  });
+
+  for (const subCommand of command.commands) {
+    bindUnknownCommandHandler(subCommand, `${prefix} ${subCommand.name()}`);
+  }
+}
 
 // ── init ─────────────────────────────────────────────────────────────────────
 program.command('init')
@@ -47,6 +100,15 @@ program.command('init')
   .option('--force', 'Re-initialize even if already set up', false)
   .option('--name <name>', 'Project name')
   .action(async o => initCommand(resolve(o.root), { force: o.force, name: o.name }));
+
+// ── guide ────────────────────────────────────────────────────────────────────
+program.command('guide')
+  .alias('start')
+  .description('Guided onboarding with role-based next steps for your current phase')
+  .option(...rootOpt)
+  .option('--persona <role>', 'Tailor guidance by role: new-user | planner | developer | qa.', 'new-user')
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async o => guideCommand(resolve(o.root), { persona: o.persona, json: o.json }));
 
 // ── plan ──────────────────────────────────────────────────────────────────────
 const plan = program.command('plan')
@@ -69,6 +131,7 @@ plan.command('story [title]')
   .action(async (title, o) => planStory(resolve(o.root), title));
 
 plan.command('list')
+  .alias('ls')
   .description('List all planning artifacts with status')
   .option(...rootOpt)
   .action(async o => planList(resolve(o.root)));
@@ -95,6 +158,15 @@ planDesign.command('list')
   .description('List all design artifacts with status')
   .option(...rootOpt)
   .action(async o => planDesignList(resolve(o.root)));
+
+plan.addHelpText('after', [
+  '',
+  'Examples:',
+  '  $ specfuse plan prd --name "Storefront"',
+  '  $ specfuse plan arch',
+  '  $ specfuse plan story "Checkout flow"',
+  '  $ specfuse plan design system',
+].join('\n'));
 
 // ── specify ───────────────────────────────────────────────────────────────────
 const specify = program.command('specify')
@@ -128,6 +200,7 @@ change.command('new <name>')
   .action(async (name, o) => changeNew(resolve(o.root), name));
 
 change.command('list')
+  .alias('ls')
   .description('List active and recently archived changes')
   .option(...rootOpt)
   .action(async o => changeList(resolve(o.root)));
@@ -153,8 +226,17 @@ change.command('archive <name>')
   .option('--force', 'Archive even if verification has not passed', false)
   .action(async (name, o) => changeArchive(resolve(o.root), name, { force: o.force }));
 
+change.addHelpText('after', [
+  '',
+  'Examples:',
+  '  $ specfuse change new add-login',
+  '  $ specfuse change review add-login',
+  '  $ specfuse change verify add-login',
+  '  $ specfuse change archive add-login',
+].join('\n'));
+
 // ── sync ──────────────────────────────────────────────────────────────────────
-program.command('sync')
+const sync = program.command('sync')
   .description(
     'Run all sync rules (two-pass):\n' +
     '  Pass A: plan artifacts + stories + archive → .specfuse/constitution.md\n' +
@@ -165,8 +247,16 @@ program.command('sync')
   .option('--rule <ids...>', 'Run specific rule IDs only')
   .action(async o => syncCommand(resolve(o.root), { rules: o.rule, allowPlugins: o.allowPlugins }));
 
+sync.addHelpText('after', [
+  '',
+  'Examples:',
+  '  $ specfuse sync',
+  '  $ specfuse sync --rule plan:arch→constitution:plan-decisions',
+].join('\n'));
+
 // ── drift ─────────────────────────────────────────────────────────────────────
 program.command('drift')
+  .alias('check')
   .description('Detect spec drift across all tracked artifact pairs. Exit 1 with --fail.')
   .option(...rootOpt)
   .option(...pluginsOpt)
@@ -191,11 +281,18 @@ program.command('watch')
   .action(async o => watchCommand(resolve(o.root), { verbose: o.verbose, allowPlugins: o.allowPlugins }));
 
 // ── status ────────────────────────────────────────────────────────────────────
-program.command('status')
+const status = program.command('status')
   .description('Full project dashboard: phase, artifacts, rules, drift, hooks')
   .option(...rootOpt)
   .option(...pluginsOpt)
   .action(async o => statusCommand(resolve(o.root), { allowPlugins: o.allowPlugins }));
+
+status.addHelpText('after', [
+  '',
+  'Examples:',
+  '  $ specfuse status',
+  '  $ specfuse status --allow-plugins',
+].join('\n'));
 
 // ── doctor ────────────────────────────────────────────────────────────────────
 program.command('doctor')
@@ -215,13 +312,20 @@ program.command('uninstall-hooks')
   .option(...rootOpt)
   .action(async o => uninstallHooksCommand(resolve(o.root)));
 
+program.addHelpText('after', [
+  '',
+  'Quick start:',
+  '  $ specfuse init --name "My Project"',
+  '  $ specfuse plan prd && specfuse plan arch',
+  '  $ specfuse specify init && specfuse sync',
+  '',
+  'Optional helper:',
+  '  $ specfuse guide --persona new-user',
+].join('\n'));
+
 // ── Error handling ─────────────────────────────────────────────────────────────
 program.configureOutput({ writeErr: s => logger.error(s.trimEnd()) });
-program.on('command:*', ([cmd]) => {
-  logger.error(`Unknown command: ${cmd}`);
-  logger.info('Run `specfuse --help` to see available commands.');
-  process.exit(1);
-});
+bindUnknownCommandHandler(program, 'specfuse');
 
 program.parse(process.argv);
 if (!process.argv.slice(2).length) program.outputHelp();
