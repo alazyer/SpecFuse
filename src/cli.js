@@ -12,13 +12,13 @@ import { doctorCommand } from './commands/doctor.js';
 import { installHooksCommand, uninstallHooksCommand } from './commands/install-hooks.js';
 
 // Plan commands (replaces BMAD)
-import { planPrd, planArch, planStory, planList } from './commands/plan/index.js';
+import { planPrd, planArch, planStory, planList, planDesignSystem, planDesignFlow, planDesignScreen, planDesignList } from './commands/plan/index.js';
 
 // Specify commands (replaces Spec-Kit)
 import { specifyInit, specifyAdd, specifyShow } from './commands/specify/index.js';
 
 // Change commands (replaces OpenSpec)
-import { changeNew, changeList, changeShow, changeArchive } from './commands/change/index.js';
+import { changeNew, changeList, changeShow, changeArchive, changeReview, changeVerify } from './commands/change/index.js';
 
 import { logger } from './utils/logger.js';
 
@@ -30,7 +30,7 @@ const program = new Command();
 program
   .name('specfuse')
   .description(
-    'SpecFuse v3 — self-contained Spec-Driven Development platform.\n' +
+    'SpecFuse v4 — self-contained Spec-Driven Development platform.\n' +
     'Plan, specify, change, and sync — no external tools required.'
   )
   .version(pkg.version)
@@ -50,7 +50,7 @@ program.command('init')
 
 // ── plan ──────────────────────────────────────────────────────────────────────
 const plan = program.command('plan')
-  .description('Planning workflow — create PRD, architecture doc, and user stories');
+  .description('Planning workflow — create PRD, architecture doc, design artifacts, and user stories');
 
 plan.command('prd')
   .description('Create or view the Product Requirements Document (.specfuse/plan/prd.md)')
@@ -72,6 +72,29 @@ plan.command('list')
   .description('List all planning artifacts with status')
   .option(...rootOpt)
   .action(async o => planList(resolve(o.root)));
+
+const planDesign = plan.command('design')
+  .description('Design planning workflow — create design system constraints, flows, and screen specs');
+
+planDesign.command('system')
+  .description('Create or view the design system document (.specfuse/plan/design/system.md)')
+  .option(...rootOpt)
+  .action(async o => planDesignSystem(resolve(o.root)));
+
+planDesign.command('flow [title]')
+  .description('Add a new design flow to .specfuse/plan/design/flows/')
+  .option(...rootOpt)
+  .action(async (title, o) => planDesignFlow(resolve(o.root), title));
+
+planDesign.command('screen [title]')
+  .description('Add a new screen/component spec to .specfuse/plan/design/screens/')
+  .option(...rootOpt)
+  .action(async (title, o) => planDesignScreen(resolve(o.root), title));
+
+planDesign.command('list')
+  .description('List all design artifacts with status')
+  .option(...rootOpt)
+  .action(async o => planDesignList(resolve(o.root)));
 
 // ── specify ───────────────────────────────────────────────────────────────────
 const specify = program.command('specify')
@@ -114,10 +137,21 @@ change.command('show <name>')
   .option(...rootOpt)
   .action(async (name, o) => changeShow(resolve(o.root), name));
 
-change.command('archive <name>')
-  .description('Archive a completed change: moves to .specfuse/changes/archive/YYYY-MM-DD-<n>/')
+change.command('review <name>')
+  .description('Generate or inspect review.md for a change proposal')
   .option(...rootOpt)
-  .action(async (name, o) => changeArchive(resolve(o.root), name));
+  .action(async (name, o) => changeReview(resolve(o.root), name));
+
+change.command('verify <name>')
+  .description('Generate or inspect verify.md for a change proposal')
+  .option(...rootOpt)
+  .action(async (name, o) => changeVerify(resolve(o.root), name));
+
+change.command('archive <name>')
+  .description('Archive a completed change: verification is required unless --force is used')
+  .option(...rootOpt)
+  .option('--force', 'Archive even if verification has not passed', false)
+  .action(async (name, o) => changeArchive(resolve(o.root), name, { force: o.force }));
 
 // ── sync ──────────────────────────────────────────────────────────────────────
 program.command('sync')

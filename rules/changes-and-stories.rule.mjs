@@ -5,6 +5,7 @@
  */
 import { join, basename } from 'path';
 import { readdir, access } from 'fs/promises';
+import matter from 'gray-matter';
 
 async function dirExists(p) {
   try { await access(p); return true; } catch { return false; }
@@ -74,7 +75,9 @@ export const archiveRule = {
     const items = [];
     for (const d of dirs) {
       const proposalPath = join(archiveDir, d.name, 'proposal.md');
+      const verifyPath = join(archiveDir, d.name, 'verify.md');
       const content = await ctx.read(proposalPath);
+      const verifyContent = await ctx.read(verifyPath);
       if (!content) continue;
       const titleMatch    = content.match(/^#\s+Change Proposal:\s+(.+)$/m)
                          ?? content.match(/^#\s+(.+)$/m);
@@ -82,13 +85,17 @@ export const archiveRule = {
       const summary = overviewSec
         ? overviewSec.content.split(/[.!?\n]/)[0].trim()
         : (titleMatch?.[1] ?? d.name);
-      items.push({ name: d.name, summary });
+      const verify = matter(verifyContent ?? '');
+      const verifyStatus = String(verify.data?.status ?? 'unverified').trim().toLowerCase();
+      items.push({ name: d.name, summary, verified: verifyStatus === 'pass' });
     }
     return items.length ? items : null;
   },
 
   transform(items, ctx) {
-    const lines = items.map(i => `- [archived] \`${i.name}\`: ${i.summary}`);
+    const lines = items.map(i => i.verified
+      ? `- [verified ✓] \`${i.name}\`: ${i.summary}`
+      : `- [archived, unverified] \`${i.name}\`: ${i.summary}`);
     return `> Auto-synced from \`.specfuse/changes/archive/\` by SpecFuse on ${ctx.today()}\n\n${lines.join('\n')}`;
   },
 };

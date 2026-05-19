@@ -154,7 +154,7 @@ export async function specifyShow(projectRoot) {
 
   // Detect managed sections
   const managedSections = [
-    'plan-decisions', 'plan-prd', 'user-stories', 'implemented-features',
+    'plan-decisions', 'plan-prd', 'design-constraints', 'user-stories', 'implemented-features',
   ].filter(s => content.includes(`<!-- specfuse:${s}:start -->`));
 
   logger.header('.specfuse/constitution.md');

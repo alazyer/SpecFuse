@@ -1,14 +1,17 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from 'fs/promises';
+import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import { Registry }       from '../core/registry.js';
 import { loadRules }      from '../core/rule-loader.js';
 import { runTwoPassSync } from '../core/sync-engine.js';
 import { checkAllDrift }  from '../core/drift-detector.js';
 import { detectPhase }    from '../core/phase-detector.js';
 import { readManagedSection } from '../utils/markdown.js';
+import { changeArchive, changeReview, changeVerify } from '../commands/change/index.js';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -32,10 +35,43 @@ const PRD_DOC = `# PRD
 - Deploy to AWS
 `;
 
+const DESIGN_SYSTEM_DOC = `# Design System Document
+## Design Tokens
+- Use semantic tokens only
+## Component Standards
+- Reuse shared button and modal primitives
+## Accessibility Rules
+- Minimum touch target 44×44px
+## Layout Constraints
+- Use spacing scale only
+`;
+
 const ARCHIVED_PROPOSAL = `# Change Proposal: User Auth
 ## Overview
 Implements JWT authentication with refresh token rotation.
 `;
+
+const VERIFIED_DOC = `---
+status: pass
+verified_by: qa
+verified_at: 2026-05-10
+---
+
+# Verify: User Auth
+
+## Acceptance Criteria Confirmation
+
+- [x] confirmed: Login works
+`;
+
+const CLI_PATH = fileURLToPath(new URL('../../bin/specfuse.js', import.meta.url));
+
+function runCli(root, args) {
+  return spawnSync(process.execPath, [CLI_PATH, ...args, '--root', root], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+}
 
 async function makeFixture() {
   const root = await mkdtemp(join(tmpdir(), 'sf3-test-'));
@@ -52,6 +88,11 @@ async function setupPlan(root, { arch = false, prd = false } = {}) {
   if (prd)  await writeFile(join(root, '.specfuse', 'plan', 'prd.md'), PRD_DOC);
 }
 
+async function setupDesign(root) {
+  await mkdir(join(root, '.specfuse', 'plan', 'design'), { recursive: true });
+  await writeFile(join(root, '.specfuse', 'plan', 'design', 'system.md'), DESIGN_SYSTEM_DOC);
+}
+
 async function setupChange(root, { proposal = false, archived = false } = {}) {
   if (proposal) await writeFile(
     join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'),
@@ -62,6 +103,10 @@ async function setupChange(root, { proposal = false, archived = false } = {}) {
     await writeFile(
       join(root, '.specfuse', 'changes', 'archive', '2026-04-01-user-auth', 'proposal.md'),
       ARCHIVED_PROPOSAL
+    );
+    await writeFile(
+      join(root, '.specfuse', 'changes', 'archive', '2026-04-01-user-auth', 'verify.md'),
+      VERIFIED_DOC
     );
   }
 }
@@ -108,9 +153,10 @@ describe('Rule loader', () => {
   beforeEach(async () => { root = await makeFixture(); });
   afterEach(async  () => { await rm(root, { recursive: true, force: true }); });
 
-  test('loads all 5 built-in rules', async () => {
+  test('loads all 6 built-in rules', async () => {
     const rules = await loadRules(root);
-    assert.ok(rules.length >= 5, `Expected ≥5 rules, got ${rules.length}`);
+    assert.ok(rules.length >= 6, `Expected ≥6 rules, got ${rules.length}`);
+    assert.ok(rules.some(r => r.id.includes('design-system')), 'design system rule must be loaded');
   });
 
   test('all rules have correct structure', async () => {
@@ -197,6 +243,20 @@ describe('Two-pass sync engine', () => {
     const section = readManagedSection(constitution, 'implemented-features');
     assert.ok(section, 'implemented-features section must exist');
     assert.ok(section.includes('user-auth'), 'should reference archived change name');
+    assert.ok(section.includes('[verified ✓]'), 'should mark verified archived changes');
+  });
+
+  test('design system rule populates design-constraints in constitution', async () => {
+    await setupDesign(root);
+    const registry = new Registry(root); await registry.load();
+    const rules = await loadRules(root);
+    await runTwoPassSync(root, registry, rules);
+
+    const constitution = await readFile(join(root, '.specfuse', 'constitution.md'), 'utf8');
+    const section = readManagedSection(constitution, 'design-constraints');
+    assert.ok(section, 'design-constraints section must exist');
+    assert.ok(section.includes('Accessibility Rules'));
+    assert.ok(section.includes('Minimum touch target 44×44px'));
   });
 
   test('single sync achieves IN_SYNC on all pairs', async () => {
@@ -316,19 +376,19 @@ describe('Drift detection', () => {
 
 // ─── Registry v3 ─────────────────────────────────────────────────────────────
 
-describe('Registry v3', () => {
+describe('Registry v4', () => {
   let root;
   beforeEach(async () => { root = await makeFixture(); });
   afterEach(async  () => { await rm(root, { recursive: true, force: true }); });
 
-  test('fresh registry has correct v3 schema', async () => {
+  test('fresh registry has correct v4 schema', async () => {
     const registry = new Registry(root);
     await registry.load();
-    assert.equal(registry.data.version, '3.0.0');
+    assert.equal(registry.data.version, '4.0.0');
     assert.equal(registry.data.phase, 'unknown');
   });
 
-  test('migrates v2 registry to v3 with fresh syncs', async () => {
+  test('migrates v2 registry to v4 with fresh syncs', async () => {
     await mkdir(join(root, '.specfuse'), { recursive: true });
     await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({
       version: '2.0.0', phase: 'feature-dev', detectedFrameworks: ['bmad'],
@@ -336,9 +396,9 @@ describe('Registry v3', () => {
     }));
     const registry = new Registry(root);
     await registry.load();
-    assert.equal(registry.data.version, '3.0.0');
+    assert.equal(registry.data.version, '4.0.0');
     assert.equal(registry.data.migratedFrom, '2.0.0');
-    assert.deepEqual(registry.data.syncs, {}, 'v3 migration must reset syncs (different artifact IDs)');
+    assert.deepEqual(registry.data.syncs, {}, 'v4 migration must reset syncs (different artifact IDs)');
   });
 
   test('all artifact paths are under .specfuse/ or project root', () => {
@@ -350,5 +410,105 @@ describe('Registry v3', () => {
       assert.ok(isInternal,
         `Artifact ${id}: path '${desc.path}' must be under .specfuse/ (including .specfuse/constitution.md)`);
     }
+  });
+});
+
+describe('Change commands v4', () => {
+  let root;
+  const originalExit = process.exit;
+
+  beforeEach(async () => { root = await makeFixture(); });
+  afterEach(async  () => {
+    process.exit = originalExit;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test('change review and verify generate artifacts from proposal and constitution', async () => {
+    await writeFile(join(root, '.specfuse', 'constitution.md'), '# Project Constitution\n\n## Accessibility Rules\n- Touch target 44×44px\n');
+    await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart can add items\n- [ ] Cart can remove items\n`);
+
+    await changeReview(root, 'add-cart');
+    await changeVerify(root, 'add-cart');
+
+    const review = await readFile(join(root, '.specfuse', 'changes', 'add-cart', 'review.md'), 'utf8');
+    const verify = await readFile(join(root, '.specfuse', 'changes', 'add-cart', 'verify.md'), 'utf8');
+
+    assert.ok(review.includes('Acceptance Criteria Review'));
+    assert.ok(review.includes('Cart can add items'));
+    assert.ok(review.includes('[Accessibility Rules] reviewed'));
+    assert.ok(verify.includes('confirmed: Cart can add items'));
+    assert.ok(verify.includes('confirmed: Cart can remove items'));
+  });
+
+  test('change archive blocks when verify.md is missing or unverified', async () => {
+    await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart works\n`);
+
+    process.exit = (code) => { throw new Error(`EXIT:${code}`); };
+
+    await assert.rejects(
+      () => changeArchive(root, 'add-cart'),
+      /EXIT:1/
+    );
+  });
+
+  test('change archive succeeds with --force and updates proposal status in archive', async () => {
+    await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart works\n`);
+
+    await changeArchive(root, 'add-cart', { force: true });
+
+    const archiveRoot = join(root, '.specfuse', 'changes', 'archive');
+    const entries = await readdir(archiveRoot, { withFileTypes: true });
+    const archived = entries.find(entry => entry.isDirectory() && entry.name.endsWith('add-cart'));
+    assert.ok(archived, 'change should be archived');
+
+    const archivedProposal = await readFile(join(archiveRoot, archived.name, 'proposal.md'), 'utf8');
+    assert.ok(archivedProposal.includes('status: archived'));
+  });
+});
+
+describe('CLI integration v4', () => {
+  let root;
+
+  beforeEach(async () => { root = await makeFixture(); });
+  afterEach(async  () => { await rm(root, { recursive: true, force: true }); });
+
+  test('plan design system command creates the design system document', async () => {
+    const result = runCli(root, ['plan', 'design', 'system']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const systemDoc = await readFile(join(root, '.specfuse', 'plan', 'design', 'system.md'), 'utf8');
+    assert.ok(systemDoc.includes('# Design System Document'));
+    assert.ok(systemDoc.includes('## Accessibility Rules'));
+  });
+
+  test('change review and verify commands generate artifacts through the CLI', async () => {
+    await writeFile(join(root, '.specfuse', 'constitution.md'), '# Project Constitution\n\n## Accessibility Rules\n- Touch target 44×44px\n');
+    await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart can add items\n- [ ] Cart can remove items\n`);
+
+    const reviewResult = runCli(root, ['change', 'review', 'add-cart']);
+    const verifyResult = runCli(root, ['change', 'verify', 'add-cart']);
+
+    assert.equal(reviewResult.status, 0, reviewResult.stderr || reviewResult.stdout);
+    assert.equal(verifyResult.status, 0, verifyResult.stderr || verifyResult.stdout);
+
+    const review = await readFile(join(root, '.specfuse', 'changes', 'add-cart', 'review.md'), 'utf8');
+    const verify = await readFile(join(root, '.specfuse', 'changes', 'add-cart', 'verify.md'), 'utf8');
+    assert.ok(review.includes('Acceptance Criteria Review'));
+    assert.ok(verify.includes('Acceptance Criteria Confirmation'));
+  });
+
+  test('change archive command blocks without verification and allows --force', async () => {
+    await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart works\n`);
+
+    const blocked = runCli(root, ['change', 'archive', 'add-cart']);
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr + blocked.stdout, /cannot be archived until verification passes/i);
+
+    const forced = runCli(root, ['change', 'archive', 'add-cart', '--force']);
+    assert.equal(forced.status, 0, forced.stderr || forced.stdout);
+
+    const archiveRoot = join(root, '.specfuse', 'changes', 'archive');
+    const entries = await readdir(archiveRoot, { withFileTypes: true });
+    assert.ok(entries.some(entry => entry.isDirectory() && entry.name.endsWith('add-cart')));
   });
 });

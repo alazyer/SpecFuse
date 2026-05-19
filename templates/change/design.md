@@ -22,6 +22,22 @@ POST /api/v1/resource
 
 *(Key flows described in plain text or Mermaid)*
 
+## UI Impact
+
+**Affects UI:** Yes / No / Partial
+
+### Screen/Component Changes
+
+*(List which screens or components are affected by this change)*
+
+### Design System References
+
+*(Which design tokens, components, or patterns from .specfuse/plan/design/ apply here)*
+
+### Accessibility Impact
+
+*(Any accessibility considerations specific to this change beyond constitutional rules)*
+
 ## Open Questions
 
 - [ ] *(Question that must be answered before implementation)*

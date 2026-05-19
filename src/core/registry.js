@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 
 const REGISTRY_DIR   = '.specfuse';
 const REGISTRY_FILE  = 'registry.json';
-const SCHEMA_VERSION = '3.0.0';
+const SCHEMA_VERSION = '4.0.0';
 
 /**
  * v3 canonical artifact paths — entirely under .specfuse/.
@@ -17,6 +17,9 @@ const SCHEMA_VERSION = '3.0.0';
 export const ARTIFACT_PATHS = {
   'plan:prd':          '.specfuse/plan/prd.md',
   'plan:arch':         '.specfuse/plan/architecture.md',
+  'plan:design-system': '.specfuse/plan/design/system.md',
+  'plan:design-flows': '.specfuse/plan/design/flows',
+  'plan:design-screens': '.specfuse/plan/design/screens',
   'plan:stories':      '.specfuse/plan/stories',       // directory
   'changes:active':    '.specfuse/changes',             // directory
   'changes:archive':   '.specfuse/changes/archive',     // directory
@@ -26,6 +29,9 @@ export const ARTIFACT_PATHS = {
 const DEFAULT_ARTIFACTS = {
   'plan:prd':    { label: 'PRD',          path: ARTIFACT_PATHS['plan:prd'] },
   'plan:arch':   { label: 'Architecture', path: ARTIFACT_PATHS['plan:arch'] },
+  'plan:design-system': { label: 'Design System', path: ARTIFACT_PATHS['plan:design-system'] },
+  'plan:design-flows': { label: 'Design Flows', path: ARTIFACT_PATHS['plan:design-flows'], isDirectory: true },
+  'plan:design-screens': { label: 'Design Screens', path: ARTIFACT_PATHS['plan:design-screens'], isDirectory: true },
   'plan:stories':{ label: 'Stories',      path: ARTIFACT_PATHS['plan:stories'], isDirectory: true },
   'constitution':{ label: 'Constitution', path: ARTIFACT_PATHS.constitution },
   'changes:active':  { label: 'Active Changes',   path: ARTIFACT_PATHS['changes:active'],  isDirectory: true },
@@ -96,13 +102,13 @@ export class Registry {
 
   _migrate(data) {
     if (data.version === SCHEMA_VERSION) return data;
-    // v1/v2 → v3: external tool paths become irrelevant; preserve syncs for reference
+    // Pre-v4 registries migrate non-destructively but reset sync state because artifact IDs changed.
     logger.info(`Migrating registry from v${data.version} → v${SCHEMA_VERSION}…`);
     return {
       ...this._fresh(),
       phase:       data.phase ?? 'unknown',
       projectName: data.projectName ?? '',
-      syncs:       {},   // v3 has different artifact IDs — start fresh
+      syncs:       {},   // v4 has different artifact IDs — start fresh
       migratedFrom: data.version,
       migratedAt:   new Date().toISOString(),
     };

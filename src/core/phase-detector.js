@@ -18,6 +18,7 @@ export async function detectPhase(projectRoot) {
 
   const hasPrd    = pathExists(join(projectRoot, '.specfuse', 'plan', 'prd.md'));
   const hasArch   = pathExists(join(projectRoot, '.specfuse', 'plan', 'architecture.md'));
+  const hasDesignSystem = pathExists(join(projectRoot, '.specfuse', 'plan', 'design', 'system.md'));
   const hasStories = pathExists(join(projectRoot, '.specfuse', 'plan', 'stories'));
   const hasConstitution = pathExists(join(projectRoot, '.specfuse', 'constitution.md'));
   const hasChanges = pathExists(join(projectRoot, '.specfuse', 'changes'));
@@ -35,6 +36,7 @@ export async function detectPhase(projectRoot) {
 
   if (hasPrd)          evidence.push('.specfuse/plan/prd.md found');
   if (hasArch)         evidence.push('.specfuse/plan/architecture.md found');
+  if (hasDesignSystem) evidence.push('.specfuse/plan/design/system.md found');
   if (hasStories)      evidence.push('.specfuse/plan/stories/ found');
   if (hasConstitution) evidence.push('constitution.md found');
   if (hasChanges)      evidence.push('.specfuse/changes/ found');
@@ -42,7 +44,7 @@ export async function detectPhase(projectRoot) {
 
   if (hasArchive && hasConstitution) return { phase: 'maintenance',  evidence };
   if (hasConstitution)               return { phase: 'feature-dev',  evidence };
-  if (hasPrd || hasArch)             return { phase: 'planning',     evidence };
+  if (hasPrd || hasArch || hasDesignSystem) return { phase: 'planning',     evidence };
   return { phase: 'unknown', evidence };
 }
 

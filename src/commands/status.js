@@ -1,5 +1,5 @@
 import { join }     from 'path';
-import { pathExists, getModifiedTime } from '../utils/fs.js';
+import { pathExists, getModifiedTime, readFileSafe } from '../utils/fs.js';
 import { Registry } from '../core/registry.js';
 import { loadRules } from '../core/rule-loader.js';
 import { checkAllDrift } from '../core/drift-detector.js';
@@ -7,6 +7,7 @@ import { detectPhase, describePhase, recommendedAction } from '../core/phase-det
 import { logger }   from '../utils/logger.js';
 import chalk from 'chalk';
 import { readdir }  from 'fs/promises';
+import { detectUiImpact, getChangeProposalState, parseFrontmatterDocument } from '../utils/change-artifacts.js';
 
 const STATE_COLOR = {
   IN_SYNC: chalk.green, SOURCE_CHANGED: chalk.yellow, TARGET_CHANGED: chalk.yellow,
@@ -22,7 +23,7 @@ const STATE_ICON = {
  * @param {{ allowPlugins?: boolean }} [options]
  */
 export async function statusCommand(projectRoot, options = {}) {
-  logger.header('SpecFuse Status  v3');
+  logger.header('SpecFuse Status  v4');
 
   const registry = new Registry(projectRoot);
   await registry.load();
@@ -44,6 +45,7 @@ export async function statusCommand(projectRoot, options = {}) {
   const planArtifacts = [
     { label: 'PRD',          path: '.specfuse/plan/prd.md' },
     { label: 'Architecture', path: '.specfuse/plan/architecture.md' },
+    { label: 'Design System', path: '.specfuse/plan/design/system.md' },
   ];
   for (const { label, path } of planArtifacts) {
     const full   = join(projectRoot, path);
@@ -56,11 +58,23 @@ export async function statusCommand(projectRoot, options = {}) {
   // Stories count
   const storiesDir = join(projectRoot, '.specfuse', 'plan', 'stories');
   let storyCount = 0;
+  let flowCount = 0;
+  let screenCount = 0;
   try {
     const entries = await readdir(storiesDir);
     storyCount = entries.filter(e => e.endsWith('.md')).length;
   } catch { /* empty */ }
   console.log(`  ${storyCount > 0 ? chalk.green('✔') : chalk.dim('○')}  ${'Stories'.padEnd(16)}  ${chalk.dim('.specfuse/plan/stories/')}  ${chalk.dim(storyCount + ' file(s)')}`);
+  try {
+    const entries = await readdir(join(projectRoot, '.specfuse', 'plan', 'design', 'flows'));
+    flowCount = entries.filter(e => e.endsWith('.md')).length;
+  } catch { /* empty */ }
+  console.log(`  ${flowCount > 0 ? chalk.green('✔') : chalk.dim('○')}  ${'Design Flows'.padEnd(16)}  ${chalk.dim('.specfuse/plan/design/flows/')}  ${chalk.dim(flowCount + ' file(s)')}`);
+  try {
+    const entries = await readdir(join(projectRoot, '.specfuse', 'plan', 'design', 'screens'));
+    screenCount = entries.filter(e => e.endsWith('.md')).length;
+  } catch { /* empty */ }
+  console.log(`  ${screenCount > 0 ? chalk.green('✔') : chalk.dim('○')}  ${'Design Screens'.padEnd(16)}  ${chalk.dim('.specfuse/plan/design/screens/')}  ${chalk.dim(screenCount + ' file(s)')}`);
 
   // Constitution
   logger.br();
@@ -76,18 +90,44 @@ export async function statusCommand(projectRoot, options = {}) {
   logger.br();
   logger.header('Changes (.specfuse/changes/)');
   let activeCount = 0, archiveCount = 0;
+  const stateCounts = { draft: 0, active: 0, reviewed: 0, verified: 0, archived: 0 };
+  let uiAffectingChanges = 0;
+  let unverifiedArchived = 0;
   try {
     const changesDir = join(projectRoot, '.specfuse', 'changes');
     const entries    = await readdir(changesDir, { withFileTypes: true });
-    activeCount  = entries.filter(e => e.isDirectory() && e.name !== 'archive').length;
+    const activeDirs = entries.filter(e => e.isDirectory() && e.name !== 'archive');
+    activeCount  = activeDirs.length;
+    for (const entry of activeDirs) {
+      const proposal = await readFileSafe(join(changesDir, entry.name, 'proposal.md')) ?? '';
+      const design = await readFileSafe(join(changesDir, entry.name, 'design.md')) ?? '';
+      const review = await readFileSafe(join(changesDir, entry.name, 'review.md')) ?? '';
+      const verify = await readFileSafe(join(changesDir, entry.name, 'verify.md')) ?? '';
+      const state = getChangeProposalState(proposal, { reviewContent: review, verifyContent: verify });
+      stateCounts[state] = (stateCounts[state] ?? 0) + 1;
+      const uiImpact = detectUiImpact(design);
+      if (uiImpact === 'yes' || uiImpact === 'partial') uiAffectingChanges++;
+    }
     const archiveDir = join(changesDir, 'archive');
     try {
       const ae = await readdir(archiveDir, { withFileTypes: true });
-      archiveCount = ae.filter(e => e.isDirectory()).length;
+      const archivedDirs = ae.filter(e => e.isDirectory());
+      archiveCount = archivedDirs.length;
+      for (const entry of archivedDirs) {
+        const verify = await readFileSafe(join(archiveDir, entry.name, 'verify.md')) ?? '';
+        stateCounts.archived++;
+        const verifyData = parseFrontmatterDocument(verify).data ?? {};
+        if (String(verifyData.status ?? 'unverified').trim().toLowerCase() !== 'pass') unverifiedArchived++;
+      }
     } catch { /* none */ }
   } catch { /* none */ }
   logger.row('Active',   String(activeCount),  activeCount  > 0 ? chalk.cyan  : chalk.dim);
   logger.row('Archived', String(archiveCount), archiveCount > 0 ? chalk.green : chalk.dim);
+  logger.row('Draft', String(stateCounts.draft), stateCounts.draft ? chalk.yellow : chalk.dim);
+  logger.row('Reviewed', String(stateCounts.reviewed), stateCounts.reviewed ? chalk.yellowBright : chalk.dim);
+  logger.row('Verified', String(stateCounts.verified), stateCounts.verified ? chalk.green : chalk.dim);
+  logger.row('UI-affecting', String(uiAffectingChanges), uiAffectingChanges ? chalk.cyan : chalk.dim);
+  if (unverifiedArchived) logger.row('Unverified archived', String(unverifiedArchived), chalk.yellow);
 
   // ── Sync Rules ────────────────────────────────────────────────────────
   logger.br();

@@ -4,9 +4,11 @@ import { readdir }                 from 'fs/promises';
 import { readFileSafe, writeFileAtomic, ensureDir, pathExists, getModifiedTime } from '../../utils/fs.js';
 import { logger }                  from '../../utils/logger.js';
 import chalk from 'chalk';
+import { slugifyName } from '../../utils/change-artifacts.js';
 
 const __dir   = dirname(fileURLToPath(import.meta.url));
 const PLAN_DIR = (root) => join(root, '.specfuse', 'plan');
+const DESIGN_DIR = (root) => join(PLAN_DIR(root), 'design');
 
 function fillTemplate(template, vars) {
   return Object.entries(vars).reduce((t, [k, v]) => t.replaceAll(`{{${k}}}`, v), template);
@@ -15,6 +17,43 @@ function fillTemplate(template, vars) {
 async function readTemplate(name) {
   const tplPath = join(__dir, '..', '..', '..', 'templates', 'plan', name);
   return readFileSafe(tplPath);
+}
+
+async function readDesignTemplate(name) {
+  const tplPath = join(__dir, '..', '..', '..', 'templates', 'plan', 'design', name);
+  return readFileSafe(tplPath);
+}
+
+async function createOrShowPlanDoc(filePath, displayPath, templateName, successLabel, nextStep) {
+  const exists = pathExists(filePath);
+
+  if (exists) {
+    logger.info(`${successLabel} already exists at ${chalk.cyan(displayPath)}`);
+    const content = await readFileSafe(filePath);
+    const lines = content.split('\n');
+    logger.br();
+    logger.header(`Current ${successLabel}`);
+    lines.slice(0, 20).forEach(l => console.log('  ' + l));
+    if (lines.length > 20) logger.info(chalk.dim(`  … (${lines.length - 20} more lines)`));
+    logger.br();
+    logger.info(`Edit: ${chalk.cyan(displayPath)}`);
+    logger.info(nextStep);
+    return true;
+  }
+
+  return false;
+}
+
+async function nextNumberedFilename(dir, prefix, title, fallbackSlug) {
+  let existing = [];
+  try {
+    const entries = await readdir(dir);
+    existing = entries.filter(entry => entry.endsWith('.md'));
+  } catch { /* empty */ }
+
+  const nextNum = String(existing.length + 1).padStart(3, '0');
+  const slug = title ? slugifyName(title) : fallbackSlug;
+  return { nextNum, filename: `${prefix}-${nextNum}-${slug || fallbackSlug}.md` };
 }
 
 // ── specfuse plan prd ─────────────────────────────────────────────────────────
@@ -180,8 +219,33 @@ export async function planList(projectRoot) {
   console.log(`  ${archExists ? chalk.green('✔') : chalk.dim('○')}  ${chalk.bold('Architecture')}  ${chalk.dim('.specfuse/plan/architecture.md')}  ${chalk.dim(archTime?.toISOString().slice(0,10) ?? 'not created')}`);
   if (!archExists) console.log(`     ${chalk.dim('→ specfuse plan arch')}`);
 
+  // Design system
+  const systemPath = join(planDir, 'design', 'system.md');
+  const systemExists = pathExists(systemPath);
+  const systemTime = systemExists ? await getModifiedTime(systemPath) : null;
+  console.log(`  ${systemExists ? chalk.green('✔') : chalk.dim('○')}  ${chalk.bold('Design System')}  ${chalk.dim('.specfuse/plan/design/system.md')}  ${chalk.dim(systemTime?.toISOString().slice(0,10) ?? 'not created')}`);
+  if (!systemExists) console.log(`     ${chalk.dim('→ specfuse plan design system')}`);
+
   // Stories
   const storiesDir = join(planDir, 'stories');
+  logger.br();
+  logger.header('Design References');
+
+  for (const [label, subdir, commandHint] of [
+    ['Flows', 'flows', 'specfuse plan design flow <title>'],
+    ['Screens', 'screens', 'specfuse plan design screen <title>'],
+  ]) {
+    const dirPath = join(planDir, 'design', subdir);
+    let count = 0;
+    try {
+      const entries = await readdir(dirPath);
+      count = entries.filter(entry => entry.endsWith('.md')).length;
+    } catch { /* empty */ }
+
+    console.log(`  ${count > 0 ? chalk.green('✔') : chalk.dim('○')}  ${chalk.bold(label)}  ${chalk.dim(`.specfuse/plan/design/${subdir}/`)}  ${chalk.dim(`${count} file(s)`)}`);
+    if (count === 0) console.log(`     ${chalk.dim(`→ ${commandHint}`)}`);
+  }
+
   logger.br();
   logger.header('User Stories');
   if (!pathExists(storiesDir)) {
@@ -207,5 +271,122 @@ export async function planList(projectRoot) {
       }
     }
   }
+  logger.br();
+}
+
+// ── specfuse plan design system ──────────────────────────────────────────────
+
+export async function planDesignSystem(projectRoot) {
+  const designDir = DESIGN_DIR(projectRoot);
+  await ensureDir(designDir);
+
+  const systemPath = join(designDir, 'system.md');
+  const alreadyExists = await createOrShowPlanDoc(
+    systemPath,
+    '.specfuse/plan/design/system.md',
+    'system.md',
+    'Design system doc',
+    `After editing: ${chalk.cyan('specfuse sync')} to propagate to constitution.md [design-constraints]`
+  );
+  if (alreadyExists) return;
+
+  const template = await readDesignTemplate('system.md');
+  const content = fillTemplate(template, {
+    date: new Date().toISOString().slice(0, 10),
+  });
+
+  await writeFileAtomic(systemPath, content);
+
+  logger.br();
+  logger.success('Created .specfuse/plan/design/system.md');
+  logger.br();
+  logger.info(`Edit ${chalk.cyan('.specfuse/plan/design/system.md')} — capture design tokens, accessibility rules, layout constraints, and component standards.`);
+  logger.info(`Run ${chalk.cyan('specfuse sync')} to propagate design constraints into .specfuse/constitution.md`);
+  logger.br();
+}
+
+// ── specfuse plan design flow ────────────────────────────────────────────────
+
+export async function planDesignFlow(projectRoot, title) {
+  const flowsDir = join(DESIGN_DIR(projectRoot), 'flows');
+  await ensureDir(flowsDir);
+
+  const { nextNum, filename } = await nextNumberedFilename(flowsDir, 'flow', title, 'new-flow');
+  const filePath = join(flowsDir, filename);
+  const template = await readDesignTemplate('flow.md');
+  const content = fillTemplate(template, {
+    date: new Date().toISOString().slice(0, 10),
+    title: title ?? 'New Flow',
+    id: `FLOW-${nextNum}`,
+  });
+
+  await writeFileAtomic(filePath, content);
+
+  logger.br();
+  logger.success(`Created ${chalk.cyan(`.specfuse/plan/design/flows/${filename}`)}`);
+  logger.info('Design flows are reference-only and are not synced into the constitution.');
+  logger.br();
+}
+
+// ── specfuse plan design screen ──────────────────────────────────────────────
+
+export async function planDesignScreen(projectRoot, title) {
+  const screensDir = join(DESIGN_DIR(projectRoot), 'screens');
+  await ensureDir(screensDir);
+
+  const { nextNum, filename } = await nextNumberedFilename(screensDir, 'screen', title, 'new-screen');
+  const filePath = join(screensDir, filename);
+  const template = await readDesignTemplate('screen.md');
+  const content = fillTemplate(template, {
+    date: new Date().toISOString().slice(0, 10),
+    title: title ?? 'New Screen',
+    id: `SCREEN-${nextNum}`,
+  });
+
+  await writeFileAtomic(filePath, content);
+
+  logger.br();
+  logger.success(`Created ${chalk.cyan(`.specfuse/plan/design/screens/${filename}`)}`);
+  logger.info('Screen specs are reference-only and are not synced into the constitution.');
+  logger.br();
+}
+
+// ── specfuse plan design list ────────────────────────────────────────────────
+
+export async function planDesignList(projectRoot) {
+  const designDir = DESIGN_DIR(projectRoot);
+  logger.header('Design Artifacts');
+  logger.br();
+
+  const systemPath = join(designDir, 'system.md');
+  const systemExists = pathExists(systemPath);
+  const systemTime = systemExists ? await getModifiedTime(systemPath) : null;
+  console.log(`  ${systemExists ? chalk.green('✔') : chalk.dim('○')}  ${chalk.bold('System')}  ${chalk.dim('.specfuse/plan/design/system.md')}  ${chalk.dim(systemTime?.toISOString().slice(0, 10) ?? 'not created')}`);
+  if (!systemExists) console.log(`     ${chalk.dim('→ specfuse plan design system')}`);
+
+  for (const [label, subdir] of [['Flows', 'flows'], ['Screens', 'screens']]) {
+    logger.br();
+    logger.header(label);
+    const dirPath = join(designDir, subdir);
+    let files = [];
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      files = entries.filter(entry => entry.isFile() && entry.name.endsWith('.md')).map(entry => entry.name).sort();
+    } catch { /* empty */ }
+
+    if (!files.length) {
+      logger.info(chalk.dim(`No ${label.toLowerCase()} yet.`));
+      continue;
+    }
+
+    for (const file of files) {
+      const content = await readFileSafe(join(dirPath, file)) ?? '';
+      const title = content.match(/^#\s+[^:]+:\s+(.+)$/m)?.[1]
+        ?? content.match(/^#\s+(.+)$/m)?.[1]
+        ?? file;
+      console.log(`  ${chalk.green('◦')}  ${chalk.bold(title)}  ${chalk.dim(file)}`);
+    }
+  }
+
   logger.br();
 }

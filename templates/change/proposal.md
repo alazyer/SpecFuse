@@ -1,7 +1,14 @@
+---
+status: active
+created: {{date}}
+reviewed_by: ~
+verified_by: ~
+archived: ~
+---
+
 # Change Proposal: {{title}}
 
 > Created by SpecFuse on {{date}}
-> Status: **Draft**
 
 ---
 

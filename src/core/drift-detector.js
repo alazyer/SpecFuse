@@ -137,6 +137,7 @@ function ids(rule) {
 function getSourceRemedy(source) {
   if (source.includes('prd'))          return 'Run `specfuse plan prd` to create the PRD.';
   if (source.includes('architecture')) return 'Run `specfuse plan arch` to create the architecture doc.';
+  if (source.includes('design/system')) return 'Run `specfuse plan design system` to create the design system doc.';
   if (source.includes('stories'))      return 'Run `specfuse plan story` to add user stories.';
   if (source.includes('archive'))      return 'Archive a completed change with `specfuse change archive <name>`.';
   return 'Create the source artifact first.';

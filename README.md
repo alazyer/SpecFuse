@@ -6,14 +6,14 @@ SpecFuse is a Node.js CLI for running a complete spec-driven workflow **without 
 
 It gives you a native workflow for:
 
-- planning with PRDs, architecture docs, and user stories
+- planning with PRDs, architecture docs, design system docs, flows, screen specs, and user stories
 - maintaining a project constitution as the source of truth
-- creating and archiving change proposals
+- creating and archiving change proposals with review and verification artifacts
 - keeping artifacts synchronized with two-pass sync and drift detection
 
 ## Why SpecFuse exists
 
-SpecFuse v3 turns the ideas behind multi-tool spec workflows into a **single local system**.
+SpecFuse v4 turns the ideas behind multi-tool spec workflows into a **single local system**.
 
 Instead of stitching together separate tools, SpecFuse keeps everything in one place:
 
@@ -27,9 +27,9 @@ Managed sections are updated automatically, while user-authored content outside 
 ## Features
 
 - **Self-contained workflow** — no external SDD CLI required
-- **Planning commands** — create PRD, architecture docs, and user stories
+- **Planning commands** — create PRD, architecture docs, design artifacts, and user stories
 - **Constitution management** — generate, inspect, and extend project rules
-- **Change workflow** — create proposal/design/tasks bundles and archive completed work
+- **Change workflow** — create proposal/design/tasks bundles, generate review/verify artifacts, and archive completed work with a verification gate
 - **Two-pass sync engine** — plan/archive artifacts flow into the constitution, then constitutional constraints flow into active change proposals
 - **Drift detection** — find stale or manually edited managed sections
 - **Live watch mode** — auto-sync on file changes
@@ -65,6 +65,7 @@ specfuse
 specfuse init --name "My Project"
 specfuse plan prd --name "My Project"
 specfuse plan arch
+specfuse plan design system
 specfuse plan story "User login"
 specfuse specify init
 specfuse sync
@@ -88,6 +89,10 @@ This scaffolds the internal workspace layout:
 ├── plan/
 │   ├── prd.md
 │   ├── architecture.md
+│   ├── design/
+│   │   ├── system.md
+│   │   ├── flows/
+│   │   └── screens/
 │   └── stories/
 ├── changes/
 │   └── archive/
@@ -103,6 +108,9 @@ Create and manage planning artifacts:
 ```bash
 specfuse plan prd --name "My Project"
 specfuse plan arch
+specfuse plan design system
+specfuse plan design flow "Checkout happy path"
+specfuse plan design screen "Checkout summary"
 specfuse plan story "Checkout"
 specfuse plan list
 ```
@@ -111,6 +119,9 @@ Planning artifacts live in:
 
 - `.specfuse/plan/prd.md`
 - `.specfuse/plan/architecture.md`
+- `.specfuse/plan/design/system.md`
+- `.specfuse/plan/design/flows/*.md`
+- `.specfuse/plan/design/screens/*.md`
 - `.specfuse/plan/stories/*.md`
 
 ## 3. Specify
@@ -142,6 +153,7 @@ specfuse drift
 Updates the constitution from:
 
 - `.specfuse/plan/architecture.md`
+- `.specfuse/plan/design/system.md`
 - `.specfuse/plan/prd.md`
 - `.specfuse/plan/stories/`
 - `.specfuse/changes/archive/`
@@ -160,6 +172,8 @@ Create, inspect, and archive changes:
 
 ```bash
 specfuse change new "add-shopping-cart"
+specfuse change review add-shopping-cart
+specfuse change verify add-shopping-cart
 specfuse change list
 specfuse change show add-shopping-cart
 specfuse change archive add-shopping-cart
@@ -171,6 +185,8 @@ Each active change is a directory containing:
 - `proposal.md`
 - `design.md`
 - `tasks.md`
+- `review.md` (generated on demand)
+- `verify.md` (generated on demand, required for verified archival)
 
 ## Command reference
 
@@ -190,6 +206,10 @@ Each active change is a directory containing:
 
 - `specfuse plan prd`
 - `specfuse plan arch`
+- `specfuse plan design system`
+- `specfuse plan design flow [title]`
+- `specfuse plan design screen [title]`
+- `specfuse plan design list`
 - `specfuse plan story [title]`
 - `specfuse plan list`
 
@@ -204,6 +224,8 @@ Each active change is a directory containing:
 - `specfuse change new <name>`
 - `specfuse change list`
 - `specfuse change show <name>`
+- `specfuse change review <name>`
+- `specfuse change verify <name>`
 - `specfuse change archive <name>`
 
 ## Managed sections

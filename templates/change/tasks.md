@@ -19,4 +19,6 @@
 - [ ] Unit test coverage ≥ threshold
 - [ ] No new lint errors
 - [ ] Constitution constraints respected (see header below)
+- [ ] review.md generated and completed
+- [ ] verify.md generated and all acceptance criteria confirmed
 - [ ] Change ready to archive

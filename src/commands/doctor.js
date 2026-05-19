@@ -5,6 +5,7 @@ import { loadRules } from '../core/rule-loader.js';
 import { logger }    from '../utils/logger.js';
 import chalk from 'chalk';
 import { readdir }   from 'fs/promises';
+import { detectUiImpact, parseFrontmatterDocument } from '../utils/change-artifacts.js';
 
 const PASS = (id, msg)      => ({ id, state: 'PASS', message: msg });
 const WARN = (id, msg, fix) => ({ id, state: 'WARN', message: msg, remediation: fix });
@@ -16,7 +17,7 @@ async function checkRegistrySchema(root) {
   try {
     const data = JSON.parse(await readFileSafe(path));
     if (!data.version) return FAIL('registry-schema', 'registry.json has no version field.', 'Run `specfuse init --force`.');
-    if (data.version === '3.0.0') return PASS('registry-schema', `registry.json is valid (v3.0.0).`);
+    if (data.version === '4.0.0') return PASS('registry-schema', `registry.json is valid (v4.0.0).`);
     return WARN('registry-schema', `registry.json is v${data.version} — will migrate on next sync.`, 'Run `specfuse sync`.');
   } catch { return FAIL('registry-schema', 'registry.json is corrupt.', 'Run `specfuse init --force`.'); }
 }
@@ -110,6 +111,56 @@ async function checkPluginSyntax(root) {
   }
 }
 
+async function checkDesignSystem(root) {
+  const changesDir = join(root, '.specfuse', 'changes');
+  const designSystemPath = join(root, '.specfuse', 'plan', 'design', 'system.md');
+  let uiAffecting = false;
+
+  try {
+    const entries = await readdir(changesDir, { withFileTypes: true });
+    const changeDirs = entries.filter(entry => entry.isDirectory() && entry.name !== 'archive');
+    for (const entry of changeDirs) {
+      const designContent = await readFileSafe(join(changesDir, entry.name, 'design.md')) ?? '';
+      const impact = detectUiImpact(designContent);
+      if (impact === 'yes' || impact === 'partial') {
+        uiAffecting = true;
+        break;
+      }
+    }
+  } catch { /* empty */ }
+
+  if (!uiAffecting) return PASS('design-system', 'No UI-affecting active changes detected.');
+  if (pathExists(designSystemPath)) return PASS('design-system', 'Design system constraints document found.');
+  return WARN('design-system',
+    'UI-affecting changes exist, but .specfuse/plan/design/system.md has not been created.',
+    'Run `specfuse plan design system` to define design constraints before building more UI.');
+}
+
+async function checkUnverifiedChanges(root) {
+  const archiveDir = join(root, '.specfuse', 'changes', 'archive');
+  let archivedDirs = [];
+  try {
+    const entries = await readdir(archiveDir, { withFileTypes: true });
+    archivedDirs = entries.filter(entry => entry.isDirectory());
+  } catch { /* empty */ }
+
+  if (!archivedDirs.length) return PASS('unverified-changes', 'No archived changes found.');
+
+  const unverified = [];
+  for (const entry of archivedDirs) {
+    const verifyContent = await readFileSafe(join(archiveDir, entry.name, 'verify.md')) ?? '';
+    const verifyData = parseFrontmatterDocument(verifyContent).data ?? {};
+    const status = String(verifyData.status ?? 'unverified').trim().toLowerCase();
+    if (status !== 'pass') unverified.push(entry.name);
+  }
+
+  return unverified.length
+    ? WARN('unverified-changes',
+        `${unverified.length} archived change(s) were force-archived without verification: ${unverified.join(', ')}.`,
+        'Review the archived verify.md files and confirm whether those changes were actually delivered.')
+    : PASS('unverified-changes', 'All archived changes are verified.');
+}
+
 /**
  * @param {string} projectRoot
  * @param {{ json?: boolean }} [options]
@@ -123,6 +174,8 @@ export async function doctorCommand(projectRoot, options = {}) {
     checkNestedSections(projectRoot),
     checkOrphanedSyncs(projectRoot),
     checkPluginSyntax(projectRoot),
+    checkDesignSystem(projectRoot),
+    checkUnverifiedChanges(projectRoot),
   ]);
 
   if (options.json) {
@@ -132,7 +185,7 @@ export async function doctorCommand(projectRoot, options = {}) {
     return;
   }
 
-  logger.header('SpecFuse Doctor  v3');
+  logger.header('SpecFuse Doctor  v4');
   logger.br();
 
   for (const r of results) {

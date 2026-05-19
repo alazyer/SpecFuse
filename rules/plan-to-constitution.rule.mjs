@@ -13,6 +13,13 @@ const ARCH_SECTIONS = [
   ['Security', 'Security Considerations', 'Security Rules'],
 ];
 
+const DESIGN_SECTIONS = [
+  ['Accessibility Rules'],
+  ['Component Standards'],
+  ['Design Tokens'],
+  ['Layout Constraints'],
+];
+
 export const planArchRule = {
   id:      'plan:arch→constitution:plan-decisions',
   pass:    'A',
@@ -70,5 +77,32 @@ export const planPrdRule = {
       `### From: ${heading}\n\n${ctx.contentToRules(heading, content)}`
     );
     return `> Auto-synced from \`.specfuse/plan/prd.md\` by SpecFuse on ${ctx.today()}\n\n${sections.join('\n\n')}`;
+  },
+};
+
+export const planDesignSystemRule = {
+  id:      'plan:design-system→constitution:design-constraints',
+  pass:    'A',
+  source:  '.specfuse/plan/design/system.md',
+  sources: ['.specfuse/plan/design/system.md'],
+  target:  '.specfuse/constitution.md',
+  section: 'design-constraints',
+
+  async extract(ctx) {
+    const content = await ctx.read('.specfuse/plan/design/system.md');
+    if (!content) return null;
+    const parts = [];
+    for (const group of DESIGN_SECTIONS) {
+      const found = ctx.extractH2SectionAny(content, group);
+      if (found) parts.push({ heading: found.heading, content: found.content });
+    }
+    return parts.length ? parts : null;
+  },
+
+  transform(parts, ctx) {
+    const sections = parts.map(({ heading, content }) =>
+      `### From: ${heading}\n\n${ctx.contentToRules(heading, content)}`
+    );
+    return `> Auto-synced from \`.specfuse/plan/design/system.md\` by SpecFuse on ${ctx.today()}\n\n${sections.join('\n\n')}`;
   },
 };
