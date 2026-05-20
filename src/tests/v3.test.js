@@ -556,6 +556,76 @@ describe('CLI integration v4', () => {
     assert.doesNotMatch(output, /specfuse change review/i);
   });
 
+  test('schema init creates starter artifact schema file', async () => {
+    const result = runCli(root, ['schema', 'init']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const raw = await readFile(join(root, '.specfuse', 'artifact-schema.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    assert.equal(parsed.version, 1);
+    assert.ok(parsed.artifacts['change.*']);
+  });
+
+  test('change new applies custom schema instructions to generated artifacts', async () => {
+    await writeFile(join(root, '.specfuse', 'artifact-schema.json'), JSON.stringify({
+      version: 1,
+      artifacts: {
+        'change.*': { instructions: ['Use concise wording.'] },
+        'change.proposal': { instructions: ['Always link the ticket ID.'] },
+        'change.design': ['Call out data migration impact.'],
+      },
+    }, null, 2));
+
+    const result = runCli(root, ['change', 'new', 'schema-change']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const changeDir = join(root, '.specfuse', 'changes', 'schema-change');
+    const proposal = await readFile(join(changeDir, 'proposal.md'), 'utf8');
+    const design = await readFile(join(changeDir, 'design.md'), 'utf8');
+    const tasks = await readFile(join(changeDir, 'tasks.md'), 'utf8');
+
+    assert.match(proposal, /Custom Instructions \(Schema\)/i);
+    assert.match(proposal, /Always link the ticket ID\./);
+    assert.match(proposal, /Use concise wording\./);
+    assert.match(design, /Call out data migration impact\./);
+    assert.match(tasks, /Use concise wording\./);
+  });
+
+  test('plan story applies custom schema instructions', async () => {
+    await writeFile(join(root, '.specfuse', 'artifact-schema.json'), JSON.stringify({
+      version: 1,
+      artifacts: {
+        'plan.story': { instructions: ['Include one unhappy-path acceptance criterion.'] },
+      },
+    }, null, 2));
+
+    const result = runCli(root, ['plan', 'story', 'Schema Story']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const storiesDir = join(root, '.specfuse', 'plan', 'stories');
+    const storyFiles = await readdir(storiesDir);
+    const storyFile = storyFiles.find(name => name.includes('schema-story'));
+    assert.ok(storyFile, 'expected generated story file');
+    const storyPath = join(storiesDir, storyFile);
+    const story = await readFile(storyPath, 'utf8');
+    assert.match(story, /Custom Instructions \(Schema\)/i);
+    assert.match(story, /Include one unhappy-path acceptance criterion\./);
+  });
+
+  test('invalid artifact schema fails generation with actionable message', async () => {
+    await writeFile(join(root, '.specfuse', 'artifact-schema.json'), JSON.stringify({
+      version: 1,
+      artifacts: {
+        'plan.story': { instructions: [123] },
+      },
+    }, null, 2));
+
+    const result = runCli(root, ['plan', 'story', 'Broken Schema Story']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr + result.stdout, /Artifact schema error/i);
+    assert.match(result.stderr + result.stdout, /instructions\[0\] must be a string/i);
+  });
+
   test('change review and verify commands generate artifacts through the CLI', async () => {
     await writeFile(join(root, '.specfuse', 'constitution.md'), '# Project Constitution\n\n## Accessibility Rules\n- Touch target 44×44px\n');
     await writeFile(join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'), `---\nstatus: active\ncreated: 2026-05-10\nreviewed_by: ~\nverified_by: ~\narchived: ~\n---\n\n# Change Proposal: Add Cart\n\n## Acceptance Criteria\n- [ ] Cart can add items\n- [ ] Cart can remove items\n`);

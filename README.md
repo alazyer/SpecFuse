@@ -30,6 +30,7 @@ Managed sections are updated automatically, while user-authored content outside 
 - **Planning commands** — create PRD, architecture docs, design artifacts, and user stories
 - **Constitution management** — generate, inspect, and extend project rules
 - **Change workflow** — create proposal/design/tasks bundles, generate review/verify artifacts, and archive completed work with a verification gate
+- **Custom artifact schema** — add project-specific generation instructions before creating artifacts
 - **Two-pass sync engine** — plan/archive artifacts flow into the constitution, then constitutional constraints flow into active change proposals
 - **Drift detection** — find stale or manually edited managed sections
 - **Live watch mode** — auto-sync on file changes
@@ -184,12 +185,56 @@ Each active change is a directory containing:
 - `review.md` (generated on demand)
 - `verify.md` (generated on demand, required for verified archival)
 
+## Custom artifact schema
+
+Customize generation instructions before creating artifacts:
+
+```bash
+specfuse schema init
+specfuse schema show
+```
+
+Then edit `.specfuse/artifact-schema.json` and add instructions per artifact key, for example:
+
+```json
+{
+  "version": 1,
+  "artifacts": {
+    "change.*": {
+      "instructions": [
+        "Keep language concise."
+      ]
+    },
+    "change.proposal": {
+      "instructions": [
+        "Always link related issue IDs in the overview."
+      ]
+    },
+    "plan.story": {
+      "instructions": [
+        "Include at least one unhappy-path acceptance criterion."
+      ]
+    }
+  }
+}
+```
+
+Supported artifact keys include:
+
+- `plan.prd`, `plan.arch`, `plan.story`
+- `plan.design.system`, `plan.design.flow`, `plan.design.screen`
+- `change.proposal`, `change.design`, `change.tasks`
+- `change.review`, `change.verify`
+- `specify.constitution`
+
 ## Command reference
 
 ### Core
 
 - `specfuse init`
 - `specfuse guide`
+- `specfuse schema init`
+- `specfuse schema show`
 - `specfuse sync`
 - `specfuse diff`
 - `specfuse drift`

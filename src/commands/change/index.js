@@ -4,6 +4,11 @@ import { readdir }    from 'fs/promises';
 import { readFileSafe, writeFileAtomic, ensureDir, pathExists, getModifiedTime } from '../../utils/fs.js';
 import { readManagedSection } from '../../utils/markdown.js';
 import {
+  loadArtifactSchema,
+  getArtifactSchemaInstructions,
+  applyArtifactSchemaInstructions,
+} from '../../core/artifact-schema.js';
+import {
   slugifyName,
   titleCaseChangeName,
   parseFrontmatterDocument,
@@ -35,6 +40,20 @@ const __dir_change = dirname(fileURLToPath(import.meta.url));
 async function readTemplate(name) {
   const tplPath = join(__dir_change, '..', '..', '..', 'templates', 'change', name);
   return readFileSafe(tplPath);
+}
+
+async function loadSchemaOrExit(projectRoot, schemaPath) {
+  try {
+    return await loadArtifactSchema(projectRoot, { schemaPath });
+  } catch (err) {
+    logger.error(`Artifact schema error: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+function applySchema(content, schema, artifactId) {
+  const instructions = getArtifactSchemaInstructions(schema, artifactId);
+  return applyArtifactSchemaInstructions(content, instructions);
 }
 
 async function resolveChangeDir(projectRoot, name) {
@@ -83,7 +102,7 @@ function verifyStatusLabel(content = '') {
   return normalizeVerifyStatus(data.status);
 }
 
-async function generateReviewFile(projectRoot, changeDir, files, vars) {
+async function generateReviewFile(projectRoot, changeDir, files, vars, schema) {
   const reviewPath = join(changeDir, 'review.md');
   if (pathExists(reviewPath)) return false;
 
@@ -94,30 +113,30 @@ async function generateReviewFile(projectRoot, changeDir, files, vars) {
   );
   const acceptanceChecklist = buildUncheckedChecklist(extractAcceptanceCriteria(files.proposal));
   const template = await readTemplate('review.md') ?? '';
-  const content = fillReviewTemplate(template, {
+  const content = applySchema(fillReviewTemplate(template, {
     ...vars,
     constitutionalChecklist,
     acceptanceChecklist,
     reviewer: '~',
     reviewedAt: '~',
-  });
+  }), schema, 'change.review');
 
   await writeFileAtomic(reviewPath, content);
   return true;
 }
 
-async function generateVerifyFile(changeDir, files, vars) {
+async function generateVerifyFile(changeDir, files, vars, schema) {
   const verifyPath = join(changeDir, 'verify.md');
   if (pathExists(verifyPath)) return false;
 
   const confirmationChecklist = buildConfirmedChecklist(extractAcceptanceCriteria(files.proposal));
   const template = await readTemplate('verify.md') ?? '';
-  const content = fillReviewTemplate(template, {
+  const content = applySchema(fillReviewTemplate(template, {
     ...vars,
     confirmationChecklist,
     verifiedBy: '~',
     verifiedAt: '~',
-  });
+  }), schema, 'change.verify');
 
   await writeFileAtomic(verifyPath, content);
   return true;
@@ -143,7 +162,7 @@ function summarizeVerifyProgress(verifyContent = '') {
  * @param {string} projectRoot
  * @param {string} name   Change name (will be kebab-cased)
  */
-export async function changeNew(projectRoot, name) {
+export async function changeNew(projectRoot, name, options = {}) {
   const slug       = slugifyName(name);
   const changeDir  = join(CHANGES_DIR(projectRoot), slug);
 
@@ -158,10 +177,11 @@ export async function changeNew(projectRoot, name) {
   const displayTitle = titleCaseChangeName(name);
   const date         = new Date().toISOString().slice(0, 10);
   const vars         = { title: displayTitle, changeName: slug, date };
+  const schema       = await loadSchemaOrExit(projectRoot, options.schema);
 
-  const proposal = fillTemplate(await readTemplate('proposal.md') ?? '', vars);
-  const design   = fillTemplate(await readTemplate('design.md')   ?? '', vars);
-  const tasks    = fillTemplate(await readTemplate('tasks.md')    ?? '', vars);
+  const proposal = applySchema(fillTemplate(await readTemplate('proposal.md') ?? '', vars), schema, 'change.proposal');
+  const design   = applySchema(fillTemplate(await readTemplate('design.md')   ?? '', vars), schema, 'change.design');
+  const tasks    = applySchema(fillTemplate(await readTemplate('tasks.md')    ?? '', vars), schema, 'change.tasks');
 
   await writeFileAtomic(join(changeDir, 'proposal.md'), proposal);
   await writeFileAtomic(join(changeDir, 'design.md'),   design);
@@ -313,7 +333,7 @@ export async function changeShow(projectRoot, name) {
 
 // ── specfuse change review ───────────────────────────────────────────────────
 
-export async function changeReview(projectRoot, name) {
+export async function changeReview(projectRoot, name, options = {}) {
   const resolved = await resolveChangeDir(projectRoot, name);
   if (!resolved) {
     logger.error(`Change '${slugifyName(name)}' not found.`);
@@ -327,8 +347,9 @@ export async function changeReview(projectRoot, name) {
     changeName: resolved.slug,
     date: new Date().toISOString().slice(0, 10),
   };
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
 
-  const created = await generateReviewFile(projectRoot, resolved.dir, files, vars);
+  const created = await generateReviewFile(projectRoot, resolved.dir, files, vars, schema);
   const reviewPath = join(resolved.dir, 'review.md');
   const reviewContent = await readFileSafe(reviewPath) ?? '';
   const status = reviewStatusLabel(reviewContent);
@@ -344,7 +365,7 @@ export async function changeReview(projectRoot, name) {
 
 // ── specfuse change verify ───────────────────────────────────────────────────
 
-export async function changeVerify(projectRoot, name) {
+export async function changeVerify(projectRoot, name, options = {}) {
   const resolved = await resolveChangeDir(projectRoot, name);
   if (!resolved) {
     logger.error(`Change '${slugifyName(name)}' not found.`);
@@ -358,8 +379,9 @@ export async function changeVerify(projectRoot, name) {
     changeName: resolved.slug,
     date: new Date().toISOString().slice(0, 10),
   };
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
 
-  const created = await generateVerifyFile(resolved.dir, files, vars);
+  const created = await generateVerifyFile(resolved.dir, files, vars, schema);
   const verifyPath = join(resolved.dir, 'verify.md');
   const verifyContent = await readFileSafe(verifyPath) ?? '';
   const progress = summarizeVerifyProgress(verifyContent);

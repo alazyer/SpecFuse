@@ -1,6 +1,11 @@
 import { join }    from 'path';
 import { readFileSafe, writeFileAtomic, pathExists } from '../../utils/fs.js';
 import { upsertManagedSection, readManagedSection, extractAllH2Sections, stripManagedSections } from '../../utils/markdown.js';
+import {
+  loadArtifactSchema,
+  getArtifactSchemaInstructions,
+  applyArtifactSchemaInstructions,
+} from '../../core/artifact-schema.js';
 import { Registry } from '../../core/registry.js';
 import { loadRules } from '../../core/rule-loader.js';
 import { runTwoPassSync } from '../../core/sync-engine.js';
@@ -57,7 +62,16 @@ export async function specifyInit(projectRoot, options = {}) {
     return;
   }
 
-  await writeFileAtomic(constitutionPath, CONSTITUTION_TEMPLATE);
+  let schema;
+  try {
+    schema = await loadArtifactSchema(projectRoot, { schemaPath: options.schema });
+  } catch (err) {
+    logger.error(`Artifact schema error: ${err.message}`);
+    process.exit(1);
+  }
+  const schemaInstructions = getArtifactSchemaInstructions(schema, 'specify.constitution');
+  const constitution = applyArtifactSchemaInstructions(CONSTITUTION_TEMPLATE, schemaInstructions);
+  await writeFileAtomic(constitutionPath, constitution);
   logger.success('Created constitution.md');
 
   // Auto-sync plan artifacts if they exist

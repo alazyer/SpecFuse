@@ -12,6 +12,7 @@ import { watchCommand }  from './commands/watch.js';
 import { doctorCommand } from './commands/doctor.js';
 import { installHooksCommand, uninstallHooksCommand } from './commands/install-hooks.js';
 import { guideCommand } from './commands/guide.js';
+import { schemaInitCommand, schemaShowCommand } from './commands/schema.js';
 
 // Plan commands (replaces BMAD)
 import { planPrd, planArch, planStory, planList, planDesignSystem, planDesignFlow, planDesignScreen, planDesignList } from './commands/plan/index.js';
@@ -42,6 +43,7 @@ program.showSuggestionAfterError(true);
 
 const rootOpt    = ['--root <path>', 'Project root directory', '.'];
 const pluginsOpt = ['--allow-plugins', 'Allow user plugin rules in CI', false];
+const schemaOpt  = ['--schema <path>', 'Artifact schema file (default: .specfuse/artifact-schema.json)'];
 
 function levenshtein(a, b) {
   const left = String(a ?? '');
@@ -110,6 +112,23 @@ program.command('guide')
   .option('--json', 'Machine-readable JSON output', false)
   .action(async o => guideCommand(resolve(o.root), { persona: o.persona, json: o.json }));
 
+// ── schema ───────────────────────────────────────────────────────────────────
+const schema = program.command('schema')
+  .description('Custom artifact instruction schema — initialize and inspect schema config');
+
+schema.command('init')
+  .description('Create .specfuse/artifact-schema.json with starter keys')
+  .option(...rootOpt)
+  .option(...schemaOpt)
+  .option('--force', 'Recreate schema template even if file exists', false)
+  .action(async o => schemaInitCommand(resolve(o.root), { schemaPath: o.schema, force: o.force }));
+
+schema.command('show')
+  .description('Show resolved schema path and configured artifact instruction keys')
+  .option(...rootOpt)
+  .option(...schemaOpt)
+  .action(async o => schemaShowCommand(resolve(o.root), { schemaPath: o.schema }));
+
 // ── plan ──────────────────────────────────────────────────────────────────────
 const plan = program.command('plan')
   .description('Planning workflow — create PRD, architecture doc, design artifacts, and user stories');
@@ -117,18 +136,21 @@ const plan = program.command('plan')
 plan.command('prd')
   .description('Create or view the Product Requirements Document (.specfuse/plan/prd.md)')
   .option(...rootOpt)
+  .option(...schemaOpt)
   .option('--name <name>', 'Project name for the template')
-  .action(async o => planPrd(resolve(o.root), { name: o.name }));
+  .action(async o => planPrd(resolve(o.root), { name: o.name, schema: o.schema }));
 
 plan.command('arch')
   .description('Create or view the architecture document (.specfuse/plan/architecture.md)')
   .option(...rootOpt)
-  .action(async o => planArch(resolve(o.root)));
+  .option(...schemaOpt)
+  .action(async o => planArch(resolve(o.root), { schema: o.schema }));
 
 plan.command('story [title]')
   .description('Add a new user story to .specfuse/plan/stories/')
   .option(...rootOpt)
-  .action(async (title, o) => planStory(resolve(o.root), title));
+  .option(...schemaOpt)
+  .action(async (title, o) => planStory(resolve(o.root), title, { schema: o.schema }));
 
 plan.command('list')
   .alias('ls')
@@ -142,17 +164,20 @@ const planDesign = plan.command('design')
 planDesign.command('system')
   .description('Create or view the design system document (.specfuse/plan/design/system.md)')
   .option(...rootOpt)
-  .action(async o => planDesignSystem(resolve(o.root)));
+  .option(...schemaOpt)
+  .action(async o => planDesignSystem(resolve(o.root), { schema: o.schema }));
 
 planDesign.command('flow [title]')
   .description('Add a new design flow to .specfuse/plan/design/flows/')
   .option(...rootOpt)
-  .action(async (title, o) => planDesignFlow(resolve(o.root), title));
+  .option(...schemaOpt)
+  .action(async (title, o) => planDesignFlow(resolve(o.root), title, { schema: o.schema }));
 
 planDesign.command('screen [title]')
   .description('Add a new screen/component spec to .specfuse/plan/design/screens/')
   .option(...rootOpt)
-  .action(async (title, o) => planDesignScreen(resolve(o.root), title));
+  .option(...schemaOpt)
+  .action(async (title, o) => planDesignScreen(resolve(o.root), title, { schema: o.schema }));
 
 planDesign.command('list')
   .description('List all design artifacts with status')
@@ -175,9 +200,10 @@ const specify = program.command('specify')
 specify.command('init')
   .description('Create constitution.md from template (auto-syncs from plan if available)')
   .option(...rootOpt)
+  .option(...schemaOpt)
   .option('--force', 'Recreate from template even if constitution.md exists', false)
   .option('--no-sync', 'Skip auto-sync of plan artifacts', false)
-  .action(async o => specifyInit(resolve(o.root), { force: o.force, sync: o.sync }));
+  .action(async o => specifyInit(resolve(o.root), { force: o.force, sync: o.sync, schema: o.schema }));
 
 specify.command('add <section>')
   .description('Add or update a rule section in constitution.md')
@@ -197,7 +223,8 @@ const change = program.command('change')
 change.command('new <name>')
   .description('Create a new change proposal directory with proposal.md, design.md, tasks.md')
   .option(...rootOpt)
-  .action(async (name, o) => changeNew(resolve(o.root), name));
+  .option(...schemaOpt)
+  .action(async (name, o) => changeNew(resolve(o.root), name, { schema: o.schema }));
 
 change.command('list')
   .alias('ls')
@@ -213,12 +240,14 @@ change.command('show <name>')
 change.command('review <name>')
   .description('Generate or inspect review.md for a change proposal')
   .option(...rootOpt)
-  .action(async (name, o) => changeReview(resolve(o.root), name));
+  .option(...schemaOpt)
+  .action(async (name, o) => changeReview(resolve(o.root), name, { schema: o.schema }));
 
 change.command('verify <name>')
   .description('Generate or inspect verify.md for a change proposal')
   .option(...rootOpt)
-  .action(async (name, o) => changeVerify(resolve(o.root), name));
+  .option(...schemaOpt)
+  .action(async (name, o) => changeVerify(resolve(o.root), name, { schema: o.schema }));
 
 change.command('archive <name>')
   .description('Archive a completed change: verification is required unless --force is used')

@@ -2,6 +2,11 @@ import { join, basename, dirname } from 'path';
 import { fileURLToPath }           from 'url';
 import { readdir }                 from 'fs/promises';
 import { readFileSafe, writeFileAtomic, ensureDir, pathExists, getModifiedTime } from '../../utils/fs.js';
+import {
+  loadArtifactSchema,
+  getArtifactSchemaInstructions,
+  applyArtifactSchemaInstructions,
+} from '../../core/artifact-schema.js';
 import { logger }                  from '../../utils/logger.js';
 import chalk from 'chalk';
 import { slugifyName } from '../../utils/change-artifacts.js';
@@ -22,6 +27,20 @@ async function readTemplate(name) {
 async function readDesignTemplate(name) {
   const tplPath = join(__dir, '..', '..', '..', 'templates', 'plan', 'design', name);
   return readFileSafe(tplPath);
+}
+
+async function loadSchemaOrExit(projectRoot, schemaPath) {
+  try {
+    return await loadArtifactSchema(projectRoot, { schemaPath });
+  } catch (err) {
+    logger.error(`Artifact schema error: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+function applySchema(content, schema, artifactId) {
+  const instructions = getArtifactSchemaInstructions(schema, artifactId);
+  return applyArtifactSchemaInstructions(content, instructions);
 }
 
 async function createOrShowPlanDoc(filePath, displayPath, templateName, successLabel, nextStep) {
@@ -87,10 +106,11 @@ export async function planPrd(projectRoot, options = {}) {
 
   const projectName = options.name ?? basename(projectRoot);
   const template    = await readTemplate('prd.md');
-  const content     = fillTemplate(template, {
+  const schema      = await loadSchemaOrExit(projectRoot, options.schema);
+  const content     = applySchema(fillTemplate(template, {
     date: new Date().toISOString().slice(0, 10),
     name: projectName,
-  });
+  }), schema, 'plan.prd');
 
   await writeFileAtomic(prdPath, content);
 
@@ -133,9 +153,10 @@ export async function planArch(projectRoot, options = {}) {
   }
 
   const template = await readTemplate('architecture.md');
-  const content  = fillTemplate(template, {
+  const schema   = await loadSchemaOrExit(projectRoot, options.schema);
+  const content  = applySchema(fillTemplate(template, {
     date: new Date().toISOString().slice(0, 10),
-  });
+  }), schema, 'plan.arch');
 
   await writeFileAtomic(archPath, content);
 
@@ -155,7 +176,7 @@ export async function planArch(projectRoot, options = {}) {
  * @param {string} projectRoot
  * @param {string} [title]   Story title (kebab-case for filename)
  */
-export async function planStory(projectRoot, title) {
+export async function planStory(projectRoot, title, options = {}) {
   const storiesDir = join(PLAN_DIR(projectRoot), 'stories');
   await ensureDir(storiesDir);
 
@@ -175,14 +196,15 @@ export async function planStory(projectRoot, title) {
 
   const displayTitle = title ?? 'New Story';
   const template = await readTemplate('story.md');
-  const content  = fillTemplate(template, {
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
+  const content  = applySchema(fillTemplate(template, {
     title: displayTitle,
     id:    `STORY-${nextNum}`,
     date:  new Date().toISOString().slice(0, 10),
     role:  'user',
     capability: 'do something',
     benefit:    'achieve an outcome',
-  });
+  }), schema, 'plan.story');
 
   await writeFileAtomic(storyPath, content);
 
@@ -276,7 +298,7 @@ export async function planList(projectRoot) {
 
 // ── specfuse plan design system ──────────────────────────────────────────────
 
-export async function planDesignSystem(projectRoot) {
+export async function planDesignSystem(projectRoot, options = {}) {
   const designDir = DESIGN_DIR(projectRoot);
   await ensureDir(designDir);
 
@@ -291,9 +313,10 @@ export async function planDesignSystem(projectRoot) {
   if (alreadyExists) return;
 
   const template = await readDesignTemplate('system.md');
-  const content = fillTemplate(template, {
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
+  const content = applySchema(fillTemplate(template, {
     date: new Date().toISOString().slice(0, 10),
-  });
+  }), schema, 'plan.design.system');
 
   await writeFileAtomic(systemPath, content);
 
@@ -307,18 +330,19 @@ export async function planDesignSystem(projectRoot) {
 
 // ── specfuse plan design flow ────────────────────────────────────────────────
 
-export async function planDesignFlow(projectRoot, title) {
+export async function planDesignFlow(projectRoot, title, options = {}) {
   const flowsDir = join(DESIGN_DIR(projectRoot), 'flows');
   await ensureDir(flowsDir);
 
   const { nextNum, filename } = await nextNumberedFilename(flowsDir, 'flow', title, 'new-flow');
   const filePath = join(flowsDir, filename);
   const template = await readDesignTemplate('flow.md');
-  const content = fillTemplate(template, {
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
+  const content = applySchema(fillTemplate(template, {
     date: new Date().toISOString().slice(0, 10),
     title: title ?? 'New Flow',
     id: `FLOW-${nextNum}`,
-  });
+  }), schema, 'plan.design.flow');
 
   await writeFileAtomic(filePath, content);
 
@@ -330,18 +354,19 @@ export async function planDesignFlow(projectRoot, title) {
 
 // ── specfuse plan design screen ──────────────────────────────────────────────
 
-export async function planDesignScreen(projectRoot, title) {
+export async function planDesignScreen(projectRoot, title, options = {}) {
   const screensDir = join(DESIGN_DIR(projectRoot), 'screens');
   await ensureDir(screensDir);
 
   const { nextNum, filename } = await nextNumberedFilename(screensDir, 'screen', title, 'new-screen');
   const filePath = join(screensDir, filename);
   const template = await readDesignTemplate('screen.md');
-  const content = fillTemplate(template, {
+  const schema = await loadSchemaOrExit(projectRoot, options.schema);
+  const content = applySchema(fillTemplate(template, {
     date: new Date().toISOString().slice(0, 10),
     title: title ?? 'New Screen',
     id: `SCREEN-${nextNum}`,
-  });
+  }), schema, 'plan.design.screen');
 
   await writeFileAtomic(filePath, content);
 
