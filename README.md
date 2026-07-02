@@ -325,6 +325,10 @@ node bin/specfuse.js --help
 - `docs/README.md` is **not required right now**. The root `README.md` is the right place for project overview, usage, and setup.
 - If the docs folder grows into tutorials, design notes, or migration guides later, then adding `docs/README.md` would make sense.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branching strategy, PR requirements, and development setup.
+
 ## License
 
 MIT
