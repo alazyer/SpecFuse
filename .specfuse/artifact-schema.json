@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "artifacts": {
+    "change.*": {
+      "instructions": [
+        "Keep language concise and implementation-oriented."
+      ]
+    },
+    "change.proposal": {
+      "instructions": [
+        "Always link related issue IDs in the Overview section."
+      ]
+    },
+    "plan.story": {
+      "instructions": [
+        "Add at least one acceptance criterion for unhappy-path behavior."
+      ]
+    }
+  }
+}

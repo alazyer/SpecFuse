@@ -1,0 +1,52 @@
+{
+  "version": "4.0.0",
+  "phase": "unknown",
+  "projectName": "SpecFuse",
+  "artifacts": {},
+  "syncs": {
+    ".specfuse/plan/architecture.md→.specfuse/constitution.md": {
+      "sourceHash": "236a342d084fbf89b3315dd3e90ce333401facec1f6923aed5f7e4d07cf37aef",
+      "targetHash": "6e836ca57da93e138e97c09a557d02b40c3b7bba5ece12514517b591c6cd749d",
+      "syncedAt": "2026-05-20T01:29:01.978Z"
+    },
+    ".specfuse/plan/prd.md→.specfuse/constitution.md": {
+      "sourceHash": "dfda36e7802f55a1e19dcec9d953be0fcb334e3cf5822f7ca71c541101a48a46",
+      "targetHash": "07805365c70358a4f89d309a235ca33c91e86cf19236b15f787341de90bc77ef",
+      "syncedAt": "2026-05-20T01:29:01.985Z"
+    }
+  },
+  "loadedRules": [
+    {
+      "id": "plan:arch→constitution:plan-decisions",
+      "source": ".specfuse/plan/architecture.md",
+      "pass": "A"
+    },
+    {
+      "id": "plan:design-system→constitution:design-constraints",
+      "source": ".specfuse/plan/design/system.md",
+      "pass": "A"
+    },
+    {
+      "id": "plan:prd→constitution:plan-prd",
+      "source": ".specfuse/plan/prd.md",
+      "pass": "A"
+    },
+    {
+      "id": "changes:archive→constitution:implemented-features",
+      "source": ".specfuse/changes/archive",
+      "pass": "A"
+    },
+    {
+      "id": "constitution→changes:proposal-headers",
+      "source": ".specfuse/constitution.md",
+      "pass": "B"
+    },
+    {
+      "id": "plan:stories→constitution:user-stories",
+      "source": ".specfuse/plan/stories",
+      "pass": "A"
+    }
+  ],
+  "hooksInstalled": false,
+  "initializedAt": "2026-05-20T01:28:49.135Z"
+}
