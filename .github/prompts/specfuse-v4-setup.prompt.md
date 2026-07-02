@@ -1,11 +1,11 @@
 ---
 mode: agent
-description: Initialize SpecFuse v3, scaffold plan/spec/change artifacts, and leave the project in a ready-to-build state with sync and drift checks completed.
+description: Initialize SpecFuse v4, scaffold plan/spec/change artifacts, and leave the project in a ready-to-build state with sync and drift checks completed.
 ---
 
-# SpecFuse v3 — Complete Setup
+# SpecFuse v4 — Complete Setup
 
-Set up a fresh SpecFuse v3 workflow end-to-end. SpecFuse v3 is fully self-contained — no BMAD, Spec-Kit, or OpenSpec required.
+Set up a fresh SpecFuse v4 workflow end-to-end. SpecFuse v4 is fully self-contained — no BMAD, Spec-Kit, or OpenSpec required.
 
 ## What to do
 

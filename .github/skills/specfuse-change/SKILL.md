@@ -11,7 +11,7 @@ allowed-tools: Bash, Read, Write
 
 # SpecFuse Change
 
-You are managing change proposals with SpecFuse v3. Each change is a directory
+You are managing change proposals with SpecFuse v4. Each change is a directory
 (not a flat file) under `.specfuse/changes/`.
 
 ## Commands

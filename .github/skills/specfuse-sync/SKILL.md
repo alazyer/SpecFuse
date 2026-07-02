@@ -7,7 +7,7 @@ description: |
 allowed-tools: Bash, Read
 ---
 
-# SpecFuse Sync v3
+# SpecFuse Sync v4
 
 Runs the two-pass sync engine. No external tools required.
 

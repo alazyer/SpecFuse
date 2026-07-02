@@ -11,7 +11,7 @@ allowed-tools: Bash, Read, Write
 
 # SpecFuse Plan
 
-You are working with the SpecFuse v3 planning workflow. All planning artifacts
+You are working with the SpecFuse v4 planning workflow. All planning artifacts
 live in `.specfuse/plan/` — no external tool required.
 
 ## Commands

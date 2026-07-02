@@ -7,7 +7,7 @@ description: |
 allowed-tools: Bash, Read
 ---
 
-# SpecFuse Drift v3
+# SpecFuse Drift v4
 
 ```bash
 specfuse drift          # Human-readable drift report

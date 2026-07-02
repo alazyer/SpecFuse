@@ -6,7 +6,7 @@ description: |
 allowed-tools: Bash, Read
 ---
 
-# SpecFuse Status v3
+# SpecFuse Status v4
 
 ```bash
 specfuse status    # Full dashboard

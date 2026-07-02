@@ -11,7 +11,7 @@ allowed-tools: Bash, Read, Write
 
 # SpecFuse Specify
 
-You are managing `.specfuse/constitution.md` with SpecFuse v3. This file is the single
+You are managing `.specfuse/constitution.md` with SpecFuse v4. This file is the single
 authoritative source of constraints, standards, and architectural rules.
 
 ## Commands
