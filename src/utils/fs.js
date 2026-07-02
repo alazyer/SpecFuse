@@ -1,8 +1,8 @@
-import { readFile, writeFile, rename, mkdir, stat, readdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { tmpdir } from 'os';
-import { randomBytes } from 'crypto';
+import { readFile, writeFile, rename, mkdir, stat, readdir } from 'fs/promises'
+import { existsSync } from 'fs'
+import { join, dirname } from 'path'
+import { tmpdir } from 'os'
+import { randomBytes } from 'crypto'
 
 /**
  * Read a file, returning null if it doesn't exist.
@@ -11,10 +11,10 @@ import { randomBytes } from 'crypto';
  */
 export async function readFileSafe(filePath) {
   try {
-    return await readFile(filePath, 'utf8');
+    return await readFile(filePath, 'utf8')
   } catch (err) {
-    if (err.code === 'ENOENT') return null;
-    throw err;
+    if (err.code === 'ENOENT') return null
+    throw err
   }
 }
 
@@ -25,11 +25,11 @@ export async function readFileSafe(filePath) {
  * @param {string} content
  */
 export async function writeFileAtomic(filePath, content) {
-  const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-  const tmp = join(tmpdir(), `specfuse-${randomBytes(6).toString('hex')}.tmp`);
-  await writeFile(tmp, content, 'utf8');
-  await rename(tmp, filePath);
+  const dir = dirname(filePath)
+  await mkdir(dir, { recursive: true })
+  const tmp = join(tmpdir(), `specfuse-${randomBytes(6).toString('hex')}.tmp`)
+  await writeFile(tmp, content, 'utf8')
+  await rename(tmp, filePath)
 }
 
 /**
@@ -38,7 +38,7 @@ export async function writeFileAtomic(filePath, content) {
  * @returns {boolean}
  */
 export function pathExists(p) {
-  return existsSync(p);
+  return existsSync(p)
 }
 
 /**
@@ -48,10 +48,10 @@ export function pathExists(p) {
  */
 export async function getModifiedTime(filePath) {
   try {
-    const s = await stat(filePath);
-    return s.mtime;
+    const s = await stat(filePath)
+    return s.mtime
   } catch {
-    return null;
+    return null
   }
 }
 
@@ -63,12 +63,12 @@ export async function getModifiedTime(filePath) {
  */
 export async function listFiles(dir, ext) {
   try {
-    const entries = await readdir(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true })
     return entries
-      .filter(e => e.isFile() && (!ext || e.name.endsWith(ext)))
-      .map(e => join(dir, e.name));
+      .filter((e) => e.isFile() && (!ext || e.name.endsWith(ext)))
+      .map((e) => join(dir, e.name))
   } catch {
-    return [];
+    return []
   }
 }
 
@@ -77,5 +77,5 @@ export async function listFiles(dir, ext) {
  * @param {string} dir
  */
 export async function ensureDir(dir) {
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true })
 }

@@ -1,6 +1,6 @@
-import { pathExists } from '../utils/fs.js';
-import { join } from 'path';
-import { getPhaseAdvice } from './workflow-advice.js';
+import { pathExists } from '../utils/fs.js'
+import { join } from 'path'
+import { getPhaseAdvice } from './workflow-advice.js'
 
 /**
  * Detect development phase from .specfuse/ directory structure.
@@ -15,51 +15,55 @@ import { getPhaseAdvice } from './workflow-advice.js';
  * @returns {Promise<{ phase: string, evidence: string[] }>}
  */
 export async function detectPhase(projectRoot) {
-  const evidence = [];
+  const evidence = []
 
-  const hasPrd    = pathExists(join(projectRoot, '.specfuse', 'plan', 'prd.md'));
-  const hasArch   = pathExists(join(projectRoot, '.specfuse', 'plan', 'architecture.md'));
-  const hasDesignSystem = pathExists(join(projectRoot, '.specfuse', 'plan', 'design', 'system.md'));
-  const hasStories = pathExists(join(projectRoot, '.specfuse', 'plan', 'stories'));
-  const hasConstitution = pathExists(join(projectRoot, '.specfuse', 'constitution.md'));
-  const hasChanges = pathExists(join(projectRoot, '.specfuse', 'changes'));
+  const hasPrd = pathExists(join(projectRoot, '.specfuse', 'plan', 'prd.md'))
+  const hasArch = pathExists(join(projectRoot, '.specfuse', 'plan', 'architecture.md'))
+  const hasDesignSystem = pathExists(join(projectRoot, '.specfuse', 'plan', 'design', 'system.md'))
+  const hasStories = pathExists(join(projectRoot, '.specfuse', 'plan', 'stories'))
+  const hasConstitution = pathExists(join(projectRoot, '.specfuse', 'constitution.md'))
+  const hasChanges = pathExists(join(projectRoot, '.specfuse', 'changes'))
   // Archive phase only if there are actual archived change dirs inside archive/
   // The archive/ directory itself is created on init — its existence alone means nothing
-  const archivePath = join(projectRoot, '.specfuse', 'changes', 'archive');
-  let hasArchive = false;
+  const archivePath = join(projectRoot, '.specfuse', 'changes', 'archive')
+  let hasArchive = false
   if (pathExists(archivePath)) {
     try {
-      const { readdirSync } = await import('fs');
-      const entries = readdirSync(archivePath, { withFileTypes: true });
-      hasArchive = entries.some(e => e.isDirectory());
-    } catch { hasArchive = false; }
+      const { readdirSync } = await import('fs')
+      const entries = readdirSync(archivePath, { withFileTypes: true })
+      hasArchive = entries.some((e) => e.isDirectory())
+    } catch {
+      hasArchive = false
+    }
   }
 
-  if (hasPrd)          evidence.push('.specfuse/plan/prd.md found');
-  if (hasArch)         evidence.push('.specfuse/plan/architecture.md found');
-  if (hasDesignSystem) evidence.push('.specfuse/plan/design/system.md found');
-  if (hasStories)      evidence.push('.specfuse/plan/stories/ found');
-  if (hasConstitution) evidence.push('constitution.md found');
-  if (hasChanges)      evidence.push('.specfuse/changes/ found');
-  if (hasArchive)      evidence.push('.specfuse/changes/archive/ found (completed changes)');
+  if (hasPrd) evidence.push('.specfuse/plan/prd.md found')
+  if (hasArch) evidence.push('.specfuse/plan/architecture.md found')
+  if (hasDesignSystem) evidence.push('.specfuse/plan/design/system.md found')
+  if (hasStories) evidence.push('.specfuse/plan/stories/ found')
+  if (hasConstitution) evidence.push('constitution.md found')
+  if (hasChanges) evidence.push('.specfuse/changes/ found')
+  if (hasArchive) evidence.push('.specfuse/changes/archive/ found (completed changes)')
 
-  if (hasArchive && hasConstitution) return { phase: 'maintenance',  evidence };
-  if (hasConstitution)               return { phase: 'feature-dev',  evidence };
-  if (hasPrd || hasArch || hasDesignSystem) return { phase: 'planning',     evidence };
-  return { phase: 'unknown', evidence };
+  if (hasArchive && hasConstitution) return { phase: 'maintenance', evidence }
+  if (hasConstitution) return { phase: 'feature-dev', evidence }
+  if (hasPrd || hasArch || hasDesignSystem) return { phase: 'planning', evidence }
+  return { phase: 'unknown', evidence }
 }
 
 /** @param {string} phase @returns {string} */
 export function describePhase(phase) {
-  return {
-    planning:      'Planning — building PRD, architecture, and user stories',
-    'feature-dev': 'Feature Development — constitution active; creating change proposals',
-    maintenance:   'Maintenance — delivering changes and archiving completed work',
-    unknown:       'Unknown — run `specfuse init` to set up this project',
-  }[phase] ?? 'Unknown phase';
+  return (
+    {
+      planning: 'Planning — building PRD, architecture, and user stories',
+      'feature-dev': 'Feature Development — constitution active; creating change proposals',
+      maintenance: 'Maintenance — delivering changes and archiving completed work',
+      unknown: 'Unknown — run `specfuse init` to set up this project',
+    }[phase] ?? 'Unknown phase'
+  )
 }
 
 /** @param {string} phase @returns {string} */
 export function recommendedAction(phase) {
-  return getPhaseAdvice(phase).statusAction;
+  return getPhaseAdvice(phase).statusAction
 }

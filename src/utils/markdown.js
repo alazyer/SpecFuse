@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'crypto'
 
 /**
  * Managed section markers.
@@ -9,8 +9,8 @@ import { createHash } from 'crypto';
  *   ... managed content ...
  *   <!-- specfuse:section-name:end -->
  */
-const makeStart = (name) => `<!-- specfuse:${name}:start -->`;
-const makeEnd   = (name) => `<!-- specfuse:${name}:end -->`;
+const makeStart = (name) => `<!-- specfuse:${name}:start -->`
+const makeEnd = (name) => `<!-- specfuse:${name}:end -->`
 
 /**
  * Upsert a managed section into a Markdown document.
@@ -22,20 +22,20 @@ const makeEnd   = (name) => `<!-- specfuse:${name}:end -->`;
  * @returns {string}              - Updated file content
  */
 export function upsertManagedSection(content, sectionName, newContent) {
-  const start = makeStart(sectionName);
-  const end   = makeEnd(sectionName);
-  const block = `${start}\n${newContent.trim()}\n${end}`;
+  const start = makeStart(sectionName)
+  const end = makeEnd(sectionName)
+  const block = `${start}\n${newContent.trim()}\n${end}`
 
   if (content.includes(start)) {
     // Replace existing block — use a non-greedy match
-    const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`${escaped(start)}[\\s\\S]*?${escaped(end)}`);
-    return content.replace(regex, block);
+    const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`${escaped(start)}[\\s\\S]*?${escaped(end)}`)
+    return content.replace(regex, block)
   }
 
   // Append to end of file with a preceding blank line
-  const trimmed = content.trimEnd();
-  return `${trimmed}\n\n---\n\n## [SpecFuse Managed] ${sectionName}\n\n${block}\n`;
+  const trimmed = content.trimEnd()
+  return `${trimmed}\n\n---\n\n## [SpecFuse Managed] ${sectionName}\n\n${block}\n`
 }
 
 /**
@@ -46,15 +46,15 @@ export function upsertManagedSection(content, sectionName, newContent) {
  * @returns {string|null}  Content inside the markers, or null if not found
  */
 export function readManagedSection(content, sectionName) {
-  const start = makeStart(sectionName);
-  const end   = makeEnd(sectionName);
+  const start = makeStart(sectionName)
+  const end = makeEnd(sectionName)
 
-  const startIdx = content.indexOf(start);
-  const endIdx   = content.indexOf(end);
+  const startIdx = content.indexOf(start)
+  const endIdx = content.indexOf(end)
 
-  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return null;
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return null
 
-  return content.slice(startIdx + start.length, endIdx).trim();
+  return content.slice(startIdx + start.length, endIdx).trim()
 }
 
 /**
@@ -65,27 +65,29 @@ export function readManagedSection(content, sectionName) {
  * @returns {string|null}
  */
 export function extractH2Section(content, headingText) {
-  const lines = content.split('\n');
-  let inSection = false;
-  const collected = [];
+  const lines = content.split('\n')
+  let inSection = false
+  const collected = []
 
   for (const line of lines) {
     if (line.startsWith('## ')) {
-      if (inSection) break; // Hit the next H2 — stop
+      if (inSection) break // Hit the next H2 — stop
       // Normalise: strip leading "1. " / "1.1 " numbering and leading emoji before comparing
-      const normalized = line.slice(3).trim()
+      const normalized = line
+        .slice(3)
+        .trim()
         .replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}\s]+/u, '') // strip leading emoji
-        .replace(/^\d+(\.\d+)*\.?\s+/, '')                                              // strip leading numbers
-        .toLowerCase();
+        .replace(/^\d+(\.\d+)*\.?\s+/, '') // strip leading numbers
+        .toLowerCase()
       if (normalized === headingText.toLowerCase()) {
-        inSection = true;
-        continue; // Skip the heading line itself
+        inSection = true
+        continue // Skip the heading line itself
       }
     }
-    if (inSection) collected.push(line);
+    if (inSection) collected.push(line)
   }
 
-  return inSection ? collected.join('\n').trim() : null;
+  return inSection ? collected.join('\n').trim() : null
 }
 
 /**
@@ -98,10 +100,10 @@ export function extractH2Section(content, headingText) {
  */
 export function extractH2SectionAny(content, candidates) {
   for (const heading of candidates) {
-    const found = extractH2Section(content, heading);
-    if (found) return { heading, content: found };
+    const found = extractH2Section(content, heading)
+    if (found) return { heading, content: found }
   }
-  return null;
+  return null
 }
 
 /**
@@ -113,22 +115,22 @@ export function extractH2SectionAny(content, candidates) {
  */
 export function extractAllH2Sections(content) {
   // Strip managed sections first so we don't extract them
-  const stripped = stripManagedSections(content);
-  const lines = stripped.split('\n');
-  const sections = [];
-  let current = null;
+  const stripped = stripManagedSections(content)
+  const lines = stripped.split('\n')
+  const sections = []
+  let current = null
 
   for (const line of lines) {
     if (line.startsWith('## ')) {
-      if (current) sections.push(current);
-      current = { heading: line.slice(3).trim(), content: '' };
+      if (current) sections.push(current)
+      current = { heading: line.slice(3).trim(), content: '' }
     } else if (current) {
-      current.content += line + '\n';
+      current.content += line + '\n'
     }
   }
-  if (current) sections.push(current);
+  if (current) sections.push(current)
 
-  return sections.map(s => ({ ...s, content: s.content.trim() }));
+  return sections.map((s) => ({ ...s, content: s.content.trim() }))
 }
 
 /**
@@ -138,7 +140,9 @@ export function extractAllH2Sections(content) {
  * @returns {string}
  */
 export function stripManagedSections(content) {
-  return content.replace(/<!-- specfuse:[^:]+:start -->[\s\S]*?<!-- specfuse:[^:]+:end -->/g, '').trim();
+  return content
+    .replace(/<!-- specfuse:[^:]+:start -->[\s\S]*?<!-- specfuse:[^:]+:end -->/g, '')
+    .trim()
 }
 
 /**
@@ -148,7 +152,7 @@ export function stripManagedSections(content) {
  * @returns {string}
  */
 export function hashContent(str) {
-  return createHash('sha256').update(str.trim(), 'utf8').digest('hex');
+  return createHash('sha256').update(str.trim(), 'utf8').digest('hex')
 }
 
 /**
@@ -162,14 +166,14 @@ export function hashContent(str) {
 export function contentToRules(sectionHeading, sectionContent) {
   const lines = sectionContent
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0 && !l.startsWith('#'));
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('#'))
 
-  const rules = lines.map(l => {
+  const rules = lines.map((l) => {
     // Strip existing bullet markers for re-formatting
-    const cleaned = l.replace(/^[-*+]\s+/, '').replace(/^\d+\.\s+/, '');
-    return `- **[${sectionHeading}]** ${cleaned}`;
-  });
+    const cleaned = l.replace(/^[-*+]\s+/, '').replace(/^\d+\.\s+/, '')
+    return `- **[${sectionHeading}]** ${cleaned}`
+  })
 
-  return rules.join('\n');
+  return rules.join('\n')
 }

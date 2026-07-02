@@ -1,4 +1,4 @@
-import { readFileSafe, listFiles } from '../utils/fs.js';
+import { readFileSafe, listFiles } from '../utils/fs.js'
 import {
   extractH2Section,
   extractH2SectionAny,
@@ -6,7 +6,7 @@ import {
   hashContent,
   contentToRules,
   readManagedSection,
-} from '../utils/markdown.js';
+} from '../utils/markdown.js'
 
 /**
  * Build a frozen context object for a sync rule to use.
@@ -21,15 +21,11 @@ export function buildRuleContext(projectRoot) {
 
     // ── File I/O (read-only) ────────────────────────────────────────────
     /** @param {string} relativePath */
-    read: (relativePath) => readFileSafe(
-      relativePath.startsWith('/') ? relativePath : `${projectRoot}/${relativePath}`
-    ),
+    read: (relativePath) =>
+      readFileSafe(relativePath.startsWith('/') ? relativePath : `${projectRoot}/${relativePath}`),
 
     /** @param {string} dir  @param {string} ext */
-    listFiles: (dir, ext) => listFiles(
-      dir.startsWith('/') ? dir : `${projectRoot}/${dir}`,
-      ext
-    ),
+    listFiles: (dir, ext) => listFiles(dir.startsWith('/') ? dir : `${projectRoot}/${dir}`, ext),
 
     // ── Markdown helpers ─────────────────────────────────────────────────
     extractH2Section,
@@ -41,7 +37,7 @@ export function buildRuleContext(projectRoot) {
 
     // ── Date helper ──────────────────────────────────────────────────────
     today: () => new Date().toISOString().slice(0, 10),
-  };
+  }
 
-  return Object.freeze(ctx);
+  return Object.freeze(ctx)
 }
