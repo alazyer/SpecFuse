@@ -7,12 +7,15 @@ import { initCommand } from './commands/init.js'
 import { statusCommand } from './commands/status.js'
 import { syncCommand } from './commands/sync.js'
 import { driftCommand } from './commands/drift.js'
+import { resolveCommand } from './commands/resolve.js'
 import { diffCommand } from './commands/diff.js'
 import { watchCommand } from './commands/watch.js'
 import { doctorCommand } from './commands/doctor.js'
+import { validateCommand } from './commands/validate.js'
 import { installHooksCommand, uninstallHooksCommand } from './commands/install-hooks.js'
 import { guideCommand } from './commands/guide.js'
 import { schemaInitCommand, schemaShowCommand } from './commands/schema.js'
+import { traceCommand } from './commands/trace.js'
 
 // Plan commands (replaces BMAD)
 import {
@@ -341,8 +344,15 @@ const sync = program
   .option(...rootOpt)
   .option(...pluginsOpt)
   .option('--rule <ids...>', 'Run specific rule IDs only')
+  .option('--force', 'Overwrite BOTH_CHANGED pairs without prompting (old behavior)', false)
+  .option('--resolve', 'Run interactive resolver for BOTH_CHANGED pairs before continuing', false)
   .action(async (o) =>
-    syncCommand(resolve(o.root), { rules: o.rule, allowPlugins: o.allowPlugins }),
+    syncCommand(resolve(o.root), {
+      rules: o.rule,
+      allowPlugins: o.allowPlugins,
+      force: o.force,
+      resolve: o.resolve,
+    }),
   )
 
 sync.addHelpText(
@@ -352,6 +362,8 @@ sync.addHelpText(
     'Examples:',
     '  $ specfuse sync',
     '  $ specfuse sync --rule plan:arch→constitution:plan-decisions',
+    '  $ specfuse sync --force   # overwrite BOTH_CHANGED pairs',
+    '  $ specfuse sync --resolve # resolve conflicts interactively',
   ].join('\n'),
 )
 
@@ -372,16 +384,65 @@ program
     }),
   )
 
+// ── resolve ────────────────────────────────────────────────────────────────────
+program
+  .command('resolve <rule-id>')
+  .description('Resolve a BOTH_CHANGED conflict interactively')
+  .option(...rootOpt)
+  .option('--json', 'Output conflict data as JSON and exit (no interactive prompt)', false)
+  .action(async (ruleId, o) =>
+    resolveCommand(resolve(o.root), { ruleId, json: o.json }),
+  )
+
+// ── validate ─────────────────────────────────────────────────────────────────
+program
+  .command('validate')
+  .description('Validate spec artifact structure, content, and integrity. Exit 1 on failures.')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option('--fail', 'Exit code 1 on warnings too (strict CI mode)', false)
+  .option('--artifact <type>', 'Validate only one artifact type (prd|arch|design-system|proposal|story|all)', 'all')
+  .action(async (o) =>
+    validateCommand(resolve(o.root), {
+      json: o.json,
+      fail: o.fail,
+      artifact: o.artifact,
+    }),
+  )
+
+// ── trace ──────────────────────────────────────────────────────────────────────
+program
+  .command('trace')
+  .description(
+    'Show traceability matrix — which stories have active changes, which are implemented, and which are uncovered',
+  )
+  .option(...rootOpt)
+  .option('--coverage', 'Show only the coverage summary', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => traceCommand(resolve(o.root), { coverage: o.coverage, json: o.json }))
+
 // ── diff ──────────────────────────────────────────────────────────────────────
 program
   .command('diff')
   .description(
-    'Preview what specfuse sync would change — no files written. Exit 1 if changes exist.',
+    'Preview what specfuse sync would change — no files written (unless --apply). Exit 1 if changes exist.',
   )
   .option(...rootOpt)
   .option(...pluginsOpt)
   .option('--json', 'Machine-readable JSON output', false)
-  .action(async (o) => diffCommand(resolve(o.root), { json: o.json, allowPlugins: o.allowPlugins }))
+  .option('--apply', 'Apply the proposed changes to disk', false)
+  .option('--stat', 'Show compact stat summary instead of full diff', false)
+  .option('--color', 'Force colorized output', false)
+  .option('--no-color', 'Disable colorized output')
+  .action(async (o) =>
+    diffCommand(resolve(o.root), {
+      json: o.json,
+      allowPlugins: o.allowPlugins,
+      apply: o.apply,
+      stat: o.stat,
+      color: o.color,
+    }),
+  )
 
 // ── watch ─────────────────────────────────────────────────────────────────────
 program
