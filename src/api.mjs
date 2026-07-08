@@ -4,112 +4,44 @@
  * Embed SpecFuse in other Node.js tools without spawning a subprocess.
  *
  * @example
- * import { sync, drift, diff, status } from 'specfuse/api.mjs';
+ * import { sync, drift, diff, status, resolve, plan, specify, change, schema } from 'specfuse/api.mjs';
  *
  * const result = await sync({ root: './my-project' });
  * const report = await drift({ root: './my-project' });
- */
-
-import { resolve } from 'path'
-import { Registry } from './core/registry.js'
-import { loadRules } from './core/rule-loader.js'
-import { runTwoPassSync } from './core/sync-engine.js'
-import { checkAllDrift } from './core/drift-detector.js'
-import { computeDiff } from './core/differ.js'
-import { detectPhase } from './core/phase-detector.js'
-
-function selectRules(allRules, ruleIds = []) {
-  return ruleIds?.length && !ruleIds.includes('all')
-    ? allRules.filter((rule) => ruleIds.includes(rule.id))
-    : allRules
-}
-
-/**
- * Run sync rules in two passes.
+ * const resolved = await resolve({ root: './my-project', ruleId: 'plan:arch→constitution:plan-decisions', choice: 'source' });
  *
- * @param {{ root?: string, rules?: string[], allowPlugins?: boolean }} [options]
- * @returns {Promise<{ passA: object[], passB: object[] }>}
+ * // CRUD operations
+ * const prd = await plan.createPrd('./my-project', { name: 'My App' });
+ * const changeResult = await change.new('./my-project', 'add-auth');
+ * const constitution = await specify.show('./my-project');
+ * const schemaInfo = await schema.show('./my-project');
  */
-export async function sync(options = {}) {
-  const projectRoot = resolve(options.root ?? '.')
-  const registry = new Registry(projectRoot)
-  await registry.load()
 
-  const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const rules = selectRules(allRules, options.rules)
+// Sync/observability functions (extracted from inline for module consistency)
+export { sync, drift, diff, status, phase, resolve } from './api/sync-ops.mjs'
 
-  return runTwoPassSync(projectRoot, registry, rules)
-}
+// Import for default export
+import { sync, drift, diff, status, phase, resolve } from './api/sync-ops.mjs'
 
-/**
- * Check spec drift across all tracked artifact pairs.
- *
- * @param {{ root?: string, allowPlugins?: boolean }} [options]
- * @returns {Promise<object[]>}
- */
-export async function drift(options = {}) {
-  const projectRoot = resolve(options.root ?? '.')
-  const registry = new Registry(projectRoot)
-  await registry.load()
+// Namespaced CRUD modules
+import * as plan from './api/plan.mjs'
+import * as specify from './api/specify.mjs'
+import * as _change from './api/change.mjs'
+import * as schema from './api/schema.mjs'
 
-  const rules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  return checkAllDrift(projectRoot, registry, rules)
-}
+// Re-export change as 'change' (keyword-safe — _change import re-exported under the name 'change')
+export { _change as change }
 
-/**
- * Preview what sync would change without writing anything.
- *
- * @param {{ root?: string, rules?: string[], allowPlugins?: boolean }} [options]
- * @returns {Promise<object[]>}
- */
-export async function diff(options = {}) {
-  const projectRoot = resolve(options.root ?? '.')
-  const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const rules = selectRules(allRules, options.rules)
-  return computeDiff(projectRoot, rules)
-}
+// Typed error classes
+export {
+  SpecFuseApiError,
+  ArtifactAlreadyExistsError,
+  ArtifactNotFoundError,
+  ChangeNotVerifiedError,
+  SchemaNotFoundError,
+} from './api/errors.mjs'
 
-/**
- * Get current project status summary.
- *
- * @param {{ root?: string, allowPlugins?: boolean }} [options]
- * @returns {Promise<object>}
- */
-export async function status(options = {}) {
-  const projectRoot = resolve(options.root ?? '.')
-  const registry = new Registry(projectRoot)
-  await registry.load()
-
-  const { phase, evidence } = await detectPhase(projectRoot)
-  const rules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const driftResults = await checkAllDrift(projectRoot, registry, rules)
-
-  return {
-    projectRoot,
-    projectName: registry.getProjectName(),
-    phase,
-    evidence,
-    hooksInstalled: registry.getHooksInstalled(),
-    rules: rules.map((rule) => ({
-      id: rule.id,
-      pass: rule.pass,
-      source: rule.source,
-      target: rule.target,
-    })),
-    drift: driftResults,
-  }
-}
-
-/**
- * Detect current SpecFuse lifecycle phase.
- *
- * @param {{ root?: string }} [options]
- * @returns {Promise<{ phase: string, evidence: string[] }>}
- */
-export async function phase(options = {}) {
-  const projectRoot = resolve(options.root ?? '.')
-  return detectPhase(projectRoot)
-}
+export { plan, specify, schema }
 
 export default {
   sync,
@@ -117,4 +49,9 @@ export default {
   diff,
   status,
   phase,
+  resolve,
+  plan,
+  specify,
+  change: _change,
+  schema,
 }

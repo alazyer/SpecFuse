@@ -8,7 +8,12 @@
   },
   "exports": {
     ".": "./src/api.mjs",
-    "./api.mjs": "./src/api.mjs"
+    "./api.mjs": "./src/api.mjs",
+    "./api/plan.mjs": "./src/api/plan.mjs",
+    "./api/specify.mjs": "./src/api/specify.mjs",
+    "./api/change.mjs": "./src/api/change.mjs",
+    "./api/schema.mjs": "./src/api/schema.mjs",
+    "./api/errors.mjs": "./src/api/errors.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
