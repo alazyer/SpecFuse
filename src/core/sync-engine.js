@@ -2,7 +2,10 @@ import { join, basename } from 'path'
 import { readFileSafe, writeFileAtomic } from '../utils/fs.js'
 import { upsertManagedSection, hashContent } from '../utils/markdown.js'
 import { resolveConstitutionPath } from './drift-detector.js'
+import { checkAllDrift } from './drift-detector.js'
+import { applyResolution } from './resolver.js'
 import { buildRuleContext } from './rule-context.js'
+import { recordTraceLinks } from './traceability.js'
 import { logger } from '../utils/logger.js'
 import { stat } from 'fs/promises'
 
@@ -14,7 +17,48 @@ import { stat } from 'fs/promises'
  * @property {'A'|'B'}  pass
  */
 
-async function executeRule(rule, projectRoot, registry, ctx) {
+async function executeRule(rule, projectRoot, registry, ctx, options = {}) {
+  const { force, driftMap, onConflict } = options
+
+  // ── Single-target rule: drift guard ──────────────────────────────────────────
+  if (!rule.isMultiTarget && driftMap) {
+    const driftResult = driftMap.get(rule.id)
+    if (driftResult?.state === 'BOTH_CHANGED') {
+      if (force) {
+        logger.warn(`${rule.id}: BOTH_CHANGED — overwriting with --force.`)
+        // Fall through to normal execution below
+      } else if (onConflict) {
+        const resolution = await onConflict(rule, driftResult)
+        if (resolution) {
+          const result = await applyResolution(rule, driftResult, resolution, projectRoot, registry)
+          result.pass = rule.pass
+          return [result]
+        }
+        // Resolution declined — skip
+        return [
+          {
+            ruleId: rule.id,
+            pass: rule.pass,
+            changed: false,
+            message: `skipped — BOTH_CHANGED conflict, run \`specfuse resolve ${rule.id}\``,
+          },
+        ]
+      } else {
+        logger.warn(
+          `${rule.id}: BOTH_CHANGED — skipping. Run \`specfuse resolve ${rule.id}\` or use --force.`,
+        )
+        return [
+          {
+            ruleId: rule.id,
+            pass: rule.pass,
+            changed: false,
+            message: `skipped — BOTH_CHANGED conflict, run \`specfuse resolve ${rule.id}\``,
+          },
+        ]
+      }
+    }
+  }
+
   try {
     const extracted = await rule.extract(ctx)
     if (!extracted) {
@@ -61,6 +105,53 @@ async function executeRule(rule, projectRoot, registry, ctx) {
       for (const targetFile of targetFiles) {
         const changeDir = basename(join(targetFile, '..')) // parent dir = change name
         const targetId = `changes:${changeDir}`
+        const compoundRuleId = `${rule.id}:${changeDir}`
+
+        // Per-target drift guard for multi-target rules
+        if (driftMap) {
+          const driftResult = driftMap.get(compoundRuleId)
+          if (driftResult?.state === 'BOTH_CHANGED') {
+            if (force) {
+              logger.warn(`${compoundRuleId}: BOTH_CHANGED — overwriting with --force.`)
+              // Fall through to normal execution
+            } else if (onConflict) {
+              const resolution = await onConflict(rule, driftResult)
+              if (resolution) {
+                const result = await applyResolution(
+                  rule,
+                  driftResult,
+                  resolution,
+                  projectRoot,
+                  registry,
+                )
+                result.pass = rule.pass
+                results.push(result)
+                continue
+              }
+              // Resolution declined — skip this target
+              results.push({
+                ruleId: compoundRuleId,
+                pass: rule.pass,
+                changed: false,
+                message: `skipped — BOTH_CHANGED conflict, run \`specfuse resolve ${compoundRuleId}\``,
+              })
+              continue
+            } else {
+              logger.warn(
+                `${compoundRuleId}: BOTH_CHANGED — skipping. Run \`specfuse resolve ${compoundRuleId}\` or use --force.`,
+              )
+              results.push({
+                ruleId: compoundRuleId,
+                pass: rule.pass,
+                changed: false,
+                message: `skipped — BOTH_CHANGED conflict, run \`specfuse resolve ${compoundRuleId}\``,
+              })
+              continue
+            }
+          }
+        }
+
+        // Normal execution for this target
         const existing = (await readFileSafe(targetFile)) ?? ''
         const updated = upsertManagedSection(existing, rule.section, managedContent)
         const targetHash = hashContent(managedContent)
@@ -70,7 +161,7 @@ async function executeRule(rule, projectRoot, registry, ctx) {
 
         logger.sync(`${rule.id} → ${changeDir}/proposal.md [${rule.section}]`)
         results.push({
-          ruleId: `${rule.id}:${changeDir}`,
+          ruleId: compoundRuleId,
           pass: rule.pass,
           changed: true,
           message: `Injected [${rule.section}] into ${changeDir}/proposal.md.`,
@@ -118,22 +209,45 @@ async function executeRule(rule, projectRoot, registry, ctx) {
 }
 
 /**
+ * Build a Map<ruleId, driftResult> from drift check results.
+ */
+function buildDriftMap(driftResults) {
+  const map = new Map()
+  for (const r of driftResults) {
+    map.set(r.ruleId, r)
+  }
+  return map
+}
+
+/**
  * Run all sync rules in two passes.
  * Pass A (inbound → constitution) runs first and completes before Pass B.
  * Pass B (constitution → targets) always sees a fully-settled constitution.
+ *
+ * @param {string}  projectRoot
+ * @param {object}  registry
+ * @param {object[]} rules
+ * @param {{ force?: boolean, onConflict?: Function }} [options]
  */
-export async function runTwoPassSync(projectRoot, registry, rules) {
+export async function runTwoPassSync(projectRoot, registry, rules, options = {}) {
   const ctx = buildRuleContext(projectRoot)
   const passA = rules.filter((r) => r.pass === 'A')
   const passB = rules.filter((r) => r.pass === 'B')
 
   logger.info(`Pass A — ${passA.length} inbound rule(s) (→ constitution)`)
 
+  // Compute drift state for Pass A rules
+  const driftResultsA = await checkAllDrift(projectRoot, registry, passA)
+  const driftMapA = buildDriftMap(driftResultsA)
+
   const passAResults = []
   let passAFailed = false
 
   for (const rule of passA) {
-    const results = await executeRule(rule, projectRoot, registry, ctx)
+    const results = await executeRule(rule, projectRoot, registry, ctx, {
+      ...options,
+      driftMap: driftMapA,
+    })
     passAResults.push(...results)
     if (results.some((r) => r.message.startsWith('Error:'))) passAFailed = true
   }
@@ -149,12 +263,23 @@ export async function runTwoPassSync(projectRoot, registry, rules) {
 
   // Rebuild context so Pass B sees constitution updated by Pass A
   const freshCtx = buildRuleContext(projectRoot)
+
+  // Re-compute drift for Pass B rules (constitution may have changed during Pass A)
+  const driftResultsB = await checkAllDrift(projectRoot, registry, passB)
+  const driftMapB = buildDriftMap(driftResultsB)
+
   const passBResults = []
 
   for (const rule of passB) {
-    const results = await executeRule(rule, projectRoot, registry, freshCtx)
+    const results = await executeRule(rule, projectRoot, registry, freshCtx, {
+      ...options,
+      driftMap: driftMapB,
+    })
     passBResults.push(...results)
   }
+
+  // ── Record trace links from active proposals ────────────────────────────────
+  await recordTraceLinks(projectRoot, registry)
 
   await registry.save()
   return { passA: passAResults, passB: passBResults }

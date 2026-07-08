@@ -65,7 +65,9 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       sourceId,
       targetId,
       message: `Both ${rule.source} and [${rule.section}] changed since last sync.`,
-      remediation: 'Move manual edits outside managed markers, then run `specfuse sync`.',
+      remediation: 'Run `specfuse resolve <rule-id>` to resolve the conflict.',
+      sourceContent: sourceContent ?? '',
+      targetContent: managedSection,
     }
   if (srcChanged)
     return {
@@ -163,19 +165,31 @@ async function checkMultiTargetDrift(projectRoot, registry, rule) {
           remediation: '',
         }
 
-      return {
+      const state =
+        srcChanged && tgtChanged
+          ? 'BOTH_CHANGED'
+          : srcChanged
+            ? 'SOURCE_CHANGED'
+            : 'TARGET_CHANGED'
+
+      const result = {
         ruleId,
-        state:
-          srcChanged && tgtChanged
-            ? 'BOTH_CHANGED'
-            : srcChanged
-              ? 'SOURCE_CHANGED'
-              : 'TARGET_CHANGED',
+        state,
         sourceId: rule.source,
         targetId,
         message: `${changeName}: constitutional header is stale.`,
-        remediation: 'Run `specfuse sync`.',
+        remediation:
+          state === 'BOTH_CHANGED'
+            ? 'Run `specfuse resolve <rule-id>` to resolve the conflict.'
+            : 'Run `specfuse sync`.',
       }
+
+      if (state === 'BOTH_CHANGED') {
+        result.sourceContent = constitutionContent ?? ''
+        result.targetContent = headerSection
+      }
+
+      return result
     }),
   )
 }

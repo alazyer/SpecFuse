@@ -139,6 +139,97 @@ export class Registry {
     return this.data?.hooksInstalled ?? false
   }
 
+  // ── Trace links ───────────────────────────────────────────────────────────
+
+  /**
+   * Get all trace records from the registry.
+   * Returns `{}` if no traces exist.
+   * @returns {object} Map of storyId → { active: string[], implemented: boolean, implementedBy?: string }
+   */
+  getTraces() {
+    return this.data?.traces ?? {}
+  }
+
+  /**
+   * Record that a change references specific story IDs.
+   * Updates the `active` array for each story, replacing any previous
+   * entries for this changeName to keep links current.
+   *
+   * @param {string} changeName  Slug of the change (e.g., "add-login")
+   * @param {string[]} storyIds  Story IDs referenced by this change
+   */
+  recordTrace(changeName, storyIds) {
+    if (!this.data.traces) this.data.traces = {}
+
+    // First, remove this changeName from all existing active arrays
+    // (handles the case where stories field was edited)
+    for (const storyId of Object.keys(this.data.traces)) {
+      const record = this.data.traces[storyId]
+      if (record.active) {
+        record.active = record.active.filter((c) => c !== changeName)
+      }
+    }
+
+    // Then add this changeName to the active arrays for the new story IDs
+    for (const storyId of storyIds) {
+      if (!this.data.traces[storyId]) {
+        this.data.traces[storyId] = { active: [], implemented: false }
+      }
+      const record = this.data.traces[storyId]
+      if (!record.active) record.active = []
+      if (!record.active.includes(changeName)) {
+        record.active.push(changeName)
+      }
+    }
+
+    // Clean up empty records (no active changes, not implemented)
+    for (const storyId of Object.keys(this.data.traces)) {
+      const record = this.data.traces[storyId]
+      if (!record.active?.length && !record.implemented) {
+        delete this.data.traces[storyId]
+      }
+    }
+  }
+
+  /**
+   * Mark a story as implemented by an archived change.
+   * Removes the change from the active array and sets implemented=true.
+   *
+   * @param {string} storyId     Story ID to mark as implemented
+   * @param {string} archiveName Archive directory name (e.g., "2026-07-08-add-login")
+   */
+  markStoryImplemented(storyId, archiveName) {
+    if (!this.data.traces) this.data.traces = {}
+    if (!this.data.traces[storyId]) {
+      this.data.traces[storyId] = { active: [], implemented: false }
+    }
+    const record = this.data.traces[storyId]
+    record.implemented = true
+    record.implementedBy = archiveName
+    // Remove the archived change from the active array
+    record.active = (record.active || []).filter((c) => c !== archiveName.replace(/^\d{4}-\d{2}-\d{2}-/, ''))
+  }
+
+  /**
+   * Remove all trace links for a given change name.
+   * Used when a change is being re-indexed or cleaned up.
+   *
+   * @param {string} changeName  Slug of the change to remove
+   */
+  removeTraceLinks(changeName) {
+    if (!this.data.traces) return
+    for (const storyId of Object.keys(this.data.traces)) {
+      const record = this.data.traces[storyId]
+      if (record.active) {
+        record.active = record.active.filter((c) => c !== changeName)
+      }
+      // Clean up empty records
+      if (!record.active?.length && !record.implemented) {
+        delete this.data.traces[storyId]
+      }
+    }
+  }
+
   _fresh() {
     return {
       version: SCHEMA_VERSION,
@@ -146,6 +237,7 @@ export class Registry {
       projectName: '',
       artifacts: {},
       syncs: {},
+      traces: {},
       loadedRules: [],
       hooksInstalled: false,
       initializedAt: new Date().toISOString(),
@@ -153,7 +245,11 @@ export class Registry {
   }
 
   _migrate(data) {
-    if (data.version === SCHEMA_VERSION) return data
+    if (data.version === SCHEMA_VERSION) {
+      // Ensure traces key exists even on same-version registries
+      if (!data.traces) data.traces = {}
+      return data
+    }
     // Pre-v4 registries migrate non-destructively but reset sync state because artifact IDs changed.
     logger.info(`Migrating registry from v${data.version} → v${SCHEMA_VERSION}…`)
     return {

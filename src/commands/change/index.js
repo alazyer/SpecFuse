@@ -29,6 +29,8 @@ import {
   getChangeProposalState,
   getChangeTitle,
 } from '../../utils/change-artifacts.js'
+import { Registry } from '../../core/registry.js'
+import { parseStoryReferences } from '../../core/traceability.js'
 import { logger } from '../../utils/logger.js'
 import chalk from 'chalk'
 
@@ -163,7 +165,7 @@ async function updateProposalStatus(proposalPath, proposalContent, updates = {})
   const parsed = parseFrontmatterDocument(proposalContent)
   const data = { ...parsed.data, ...updates }
   const next = `---\n${Object.entries(data)
-    .map(([key, value]) => `${key}: ${value == null ? '~' : value}`)
+    .map(([key, value]) => `${key}: ${value === null || value === undefined ? '~' : value}`)
     .join('\n')}\n---\n\n${parsed.content.trimStart()}`
   await writeFileAtomic(proposalPath, next)
 }
@@ -543,9 +545,25 @@ export async function changeArchive(projectRoot, name, options = {}) {
   await rm(changeDir, { recursive: true, force: true })
   logger.success('Removed from active changes')
 
+  // ── Trace integration: mark linked stories as implemented ──────────────────
+  const archiveName = `${date}-${slug}`
+  const proposalContent = await readFileSafe(join(destDir, 'proposal.md'))
+  const storyIds = parseStoryReferences(proposalContent ?? '')
+
+  if (storyIds.length) {
+    const registry = new Registry(projectRoot)
+    await registry.load()
+    for (const storyId of storyIds) {
+      registry.markStoryImplemented(storyId, archiveName)
+    }
+    await registry.save()
+    logger.success(`Marked ${storyIds.length} linked story(ies) as implemented`)
+  }
+
   logger.br()
   logger.info(
     `Run ${chalk.cyan('specfuse sync')} to update .specfuse/constitution.md [implemented-features]`,
   )
+  logger.info(`Run ${chalk.cyan('specfuse trace')} to view the traceability matrix`)
   logger.br()
 }

@@ -1,6 +1,7 @@
 ---
 status: active
 created: {{date}}
+stories: ~
 reviewed_by: ~
 verified_by: ~
 archived: ~
