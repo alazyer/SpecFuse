@@ -16,6 +16,7 @@ import { installHooksCommand, uninstallHooksCommand } from './commands/install-h
 import { guideCommand } from './commands/guide.js'
 import { schemaInitCommand, schemaShowCommand } from './commands/schema.js'
 import { traceCommand } from './commands/trace.js'
+import { graphCommand } from './commands/graph.js'
 
 // Plan commands (replaces BMAD)
 import {
@@ -41,6 +42,18 @@ import {
   changeReview,
   changeVerify,
 } from './commands/change/index.js'
+
+// Batch commands
+import {
+  batchStatusCommand,
+  batchReviewCommand,
+  batchVerifyCommand,
+  batchArchiveCommand,
+} from './commands/batch.js'
+
+// Bundle commands
+import { exportCommand } from './commands/export.js'
+import { importCommand } from './commands/import.js'
 
 import { logger } from './utils/logger.js'
 
@@ -421,6 +434,45 @@ program
   .option('--json', 'Machine-readable JSON output', false)
   .action(async (o) => traceCommand(resolve(o.root), { coverage: o.coverage, json: o.json }))
 
+// ── graph ────────────────────────────────────────────────────────────────────
+const graph = program
+  .command('graph')
+  .description(
+    'Visualize dependency graph of rules and artifacts. Outputs DOT format by default.',
+  )
+  .option(...rootOpt)
+  .option(...pluginsOpt)
+  .option('--mermaid', 'Output Mermaid.js flowchart syntax', false)
+  .option('--json', 'Output JSON graph data', false)
+  .option('--artifact <name>', 'Show only rules affecting a specific artifact')
+  .option('--impact <file>', 'Show what would be affected if this file changes')
+  .option('--output <file>', 'Write output to a file instead of stdout')
+  .action(async (o) =>
+    graphCommand(resolve(o.root), {
+      mermaid: o.mermaid,
+      json: o.json,
+      artifact: o.artifact,
+      impact: o.impact,
+      output: o.output,
+      allowPlugins: o.allowPlugins,
+    }),
+  )
+
+graph.addHelpText(
+  'after',
+  [
+    '',
+    'Examples:',
+    '  $ specfuse graph                              # full graph in DOT format',
+    '  $ specfuse graph --mermaid                    # full graph in Mermaid format',
+    '  $ specfuse graph --json                       # full graph as JSON',
+    '  $ specfuse graph --artifact architecture.md    # filtered to specific artifact',
+    '  $ specfuse graph --impact src/api/auth.ts      # impact analysis for a file',
+    '  $ specfuse graph --impact src/api/auth.ts --mermaid  # impact in Mermaid',
+    '  $ specfuse graph --output graph.dot            # write DOT to a file',
+  ].join('\n'),
+)
+
 // ── diff ──────────────────────────────────────────────────────────────────────
 program
   .command('diff')
@@ -490,6 +542,143 @@ program
   .description('Remove SpecFuse-managed git hooks')
   .option(...rootOpt)
   .action(async (o) => uninstallHooksCommand(resolve(o.root)))
+
+// ── batch ─────────────────────────────────────────────────────────────────────
+const batch = program
+  .command('batch')
+  .description('Bulk operations — review, verify, archive, and status across multiple changes')
+
+batch
+  .command('status')
+  .description('Show status summary across all active changes (counts by state)')
+  .option(...rootOpt)
+  .option('--filter <pattern>', 'Filter changes by glob or regex (prefix / for regex)')
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    batchStatusCommand(resolve(o.root), {
+      filter: o.filter,
+      filterType: o.filter?.startsWith('/') ? 'regex' : 'glob',
+      json: o.json,
+    }),
+  )
+
+batch
+  .command('review')
+  .description('Bulk-approve reviews for eligible changes')
+  .requiredOption('--approve', 'Confirm bulk review approval (required for safety)')
+  .option(...rootOpt)
+  .option('--filter <pattern>', 'Filter changes by glob or regex (prefix / for regex)')
+  .option('--dry-run', 'Preview what would be approved without modifying files', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => {
+    if (!o.approve) {
+      logger.error('The --approve flag is required to confirm bulk review approval.')
+      logger.info('Run `specfuse batch review --approve` to proceed.')
+      process.exit(1)
+    }
+    batchReviewCommand(resolve(o.root), {
+      filter: o.filter,
+      filterType: o.filter?.startsWith('/') ? 'regex' : 'glob',
+      dryRun: o.dryRun,
+      json: o.json,
+    })
+  })
+
+batch
+  .command('verify')
+  .description('Bulk-pass verification for eligible changes')
+  .requiredOption('--pass', 'Confirm bulk verification pass (required for safety)')
+  .option(...rootOpt)
+  .option('--filter <pattern>', 'Filter changes by glob or regex (prefix / for regex)')
+  .option('--dry-run', 'Preview what would be verified without modifying files', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => {
+    if (!o.pass) {
+      logger.error('The --pass flag is required to confirm bulk verification pass.')
+      logger.info('Run `specfuse batch verify --pass` to proceed.')
+      process.exit(1)
+    }
+    batchVerifyCommand(resolve(o.root), {
+      filter: o.filter,
+      filterType: o.filter?.startsWith('/') ? 'regex' : 'glob',
+      dryRun: o.dryRun,
+      json: o.json,
+    })
+  })
+
+batch
+  .command('archive')
+  .description('Bulk-archive verified changes')
+  .option(...rootOpt)
+  .option('--filter <pattern>', 'Filter changes by glob or regex (prefix / for regex)')
+  .option('--dry-run', 'Preview what would be archived without modifying files', false)
+  .option('--force', 'Archive even if verification has not passed', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    batchArchiveCommand(resolve(o.root), {
+      filter: o.filter,
+      filterType: o.filter?.startsWith('/') ? 'regex' : 'glob',
+      dryRun: o.dryRun,
+      force: o.force,
+      json: o.json,
+    }),
+  )
+
+batch.addHelpText(
+  'after',
+  [
+    '',
+    'Examples:',
+    '  $ specfuse batch status',
+    '  $ specfuse batch status --filter "auth-*"',
+    '  $ specfuse batch review --approve --dry-run',
+    '  $ specfuse batch review --approve',
+    '  $ specfuse batch verify --pass --filter "/^api-/"',
+    '  $ specfuse batch verify --pass',
+    '  $ specfuse batch archive --dry-run',
+    '  $ specfuse batch archive --force',
+  ].join('\n'),
+)
+
+// ── export ───────────────────────────────────────────────────────────────────
+program
+  .command('export [output]')
+  .description('Create a portable spec bundle (constitution + changes + plan artifacts)')
+  .option(...rootOpt)
+  .option('--changes <names...>', 'Export selected changes only')
+  .option('--full', 'Export entire .specfuse/ directory', false)
+  .option('--preview', 'Show what would be exported without creating a file', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (output, o) =>
+    exportCommand(output, {
+      root: o.root,
+      changes: o.changes,
+      full: o.full,
+      preview: o.preview,
+      json: o.json,
+    }),
+  )
+
+// ── import ───────────────────────────────────────────────────────────────────
+program
+  .command('import <bundle>')
+  .description('Import a portable spec bundle into the current project')
+  .option(...rootOpt)
+  .option('--merge', 'Merge imported rules into local constitution', false)
+  .option('--replace', 'Replace local constitution entirely', false)
+  .option('--conflict <strategy>', 'Handle change conflicts: skip | overwrite | rename', 'skip')
+  .option('--preview', 'Show what would be imported without writing', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (bundle, o) =>
+    importCommand(bundle, {
+      root: o.root,
+      merge: o.merge,
+      replace: o.replace,
+      conflict: o.conflict,
+      preview: o.preview,
+      json: o.json,
+    }),
+  )
 
 program.addHelpText(
   'after',

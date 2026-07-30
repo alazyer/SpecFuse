@@ -13,7 +13,10 @@
     "./api/specify.mjs": "./src/api/specify.mjs",
     "./api/change.mjs": "./src/api/change.mjs",
     "./api/schema.mjs": "./src/api/schema.mjs",
-    "./api/errors.mjs": "./src/api/errors.mjs"
+    "./api/batch.mjs": "./src/api/batch.mjs",
+    "./api/graph.mjs": "./src/api/graph.mjs",
+    "./api/errors.mjs": "./src/api/errors.mjs",
+    "./api/bundle.mjs": "./src/api/bundle.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -31,7 +34,10 @@
     "chokidar": "^3.6.0",
     "commander": "^12.1.0",
     "diff": "^7.0.0",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "micromatch": "^4.0.0",
+    "archiver": "^7.0.0",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
     "eslint": "^9.0.0",

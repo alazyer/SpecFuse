@@ -113,6 +113,36 @@ export class Registry {
     return a?.path ? join(this.projectRoot, a.path) : null
   }
 
+  // ── Rule definitions & sync entries ────────────────────────────────────────
+
+  /**
+   * Get the full list of loaded rule definitions.
+   * Each entry has { id, source, pass }.
+   * @returns {Array<{id: string, source: string, pass: string}>}
+   */
+  getRuleDefinitions() {
+    return this.data?.loadedRules ?? []
+  }
+
+  /**
+   * Get all sync entries with their source/target paths and results.
+   * Returns an array of { sourceId, targetId, sourceHash, targetHash, syncedAt }.
+   * @returns {Array<{sourceId: string, targetId: string, sourceHash: string, targetHash: string, syncedAt: string}>}
+   */
+  getSyncEntries() {
+    const syncs = this.data?.syncs ?? {}
+    return Object.entries(syncs).map(([key, val]) => {
+      const [sourceId, targetId] = key.split('→')
+      return {
+        sourceId: sourceId ?? '',
+        targetId: targetId ?? '',
+        sourceHash: val.sourceHash ?? '',
+        targetHash: val.targetHash ?? '',
+        syncedAt: val.syncedAt ?? '',
+      }
+    })
+  }
+
   // ── Phase & state ─────────────────────────────────────────────────────────
   setPhase(phase) {
     this.data.phase = phase
@@ -137,6 +167,118 @@ export class Registry {
   }
   getHooksInstalled() {
     return this.data?.hooksInstalled ?? false
+  }
+
+  // ── History ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Record a history event.
+   * @param {string} type - Event type (one of EVENT_TYPES)
+   * @param {string} summary - Human-readable summary
+   * @param {object} [details] - Optional structured details
+   */
+  recordHistoryEvent(type, summary, details = {}) {
+    if (!this.data.history) this.data.history = []
+    const seq = this.data.history.length + 1
+    this.data.history.push({
+      id: `evt-${String(seq).padStart(3, '0')}`,
+      timestamp: new Date().toISOString(),
+      type,
+      summary,
+      details,
+    })
+    // Prune if exceeding maxHistory
+    const max = this.data.maxHistory ?? 100
+    if (this.data.history.length > max) {
+      this.data.history = this.data.history.slice(-max)
+    }
+  }
+
+  /**
+   * Get history events with optional filtering.
+   * @param {{ since?: string, until?: string, limit?: number, type?: string }} [options]
+   * @returns {Array<object>}
+   */
+  getHistory(options = {}) {
+    let events = this.data?.history ?? []
+    if (options.type) {
+      events = events.filter((e) => e.type === options.type)
+    }
+    if (options.since) {
+      const since = new Date(options.since).getTime()
+      events = events.filter((e) => new Date(e.timestamp).getTime() >= since)
+    }
+    if (options.until) {
+      const until = new Date(options.until).getTime()
+      events = events.filter((e) => new Date(e.timestamp).getTime() <= until)
+    }
+    if (options.limit && options.limit < events.length) {
+      events = events.slice(-options.limit)
+    }
+    return events
+  }
+
+  /**
+   * Set the maximum number of history events to retain.
+   * @param {number} max
+   */
+  setMaxHistory(max) {
+    this.data.maxHistory = max
+    // Prune immediately if current history exceeds new limit
+    if (this.data.history && this.data.history.length > max) {
+      this.data.history = this.data.history.slice(-max)
+    }
+  }
+
+  /**
+   * Get the current maxHistory setting.
+   * @returns {number}
+   */
+  getMaxHistory() {
+    return this.data?.maxHistory ?? 100
+  }
+
+  // ── Import records ────────────────────────────────────────────────────────
+
+  /**
+   * Record an import event.
+   * @param {{ timestamp?: string, sourceProject?: string, mode?: string, conflict?: string, artifactCounts?: object }} metadata
+   */
+  recordImport(metadata = {}) {
+    if (!this.data.imports) this.data.imports = []
+    this.data.imports.push({
+      id: `imp-${String(this.data.imports.length + 1).padStart(3, '0')}`,
+      timestamp: metadata.timestamp ?? new Date().toISOString(),
+      sourceProject: metadata.sourceProject ?? 'unknown',
+      mode: metadata.mode ?? 'merge',
+      conflict: metadata.conflict ?? 'skip',
+      artifactCounts: metadata.artifactCounts ?? {},
+    })
+    // Prune if exceeding 50
+    if (this.data.imports.length > 50) {
+      this.data.imports = this.data.imports.slice(-50)
+    }
+  }
+
+  /**
+   * Get import records with optional filtering.
+   * @param {{ since?: string, until?: string, limit?: number }} [options]
+   * @returns {Array<object>}
+   */
+  getImports(options = {}) {
+    let imports = this.data?.imports ?? []
+    if (options.since) {
+      const since = new Date(options.since).getTime()
+      imports = imports.filter((i) => new Date(i.timestamp).getTime() >= since)
+    }
+    if (options.until) {
+      const until = new Date(options.until).getTime()
+      imports = imports.filter((i) => new Date(i.timestamp).getTime() <= until)
+    }
+    if (options.limit && options.limit < imports.length) {
+      imports = imports.slice(-options.limit)
+    }
+    return imports
   }
 
   // ── Trace links ───────────────────────────────────────────────────────────
@@ -238,6 +380,9 @@ export class Registry {
       artifacts: {},
       syncs: {},
       traces: {},
+      history: [],
+      maxHistory: 100,
+      imports: [],
       loadedRules: [],
       hooksInstalled: false,
       initializedAt: new Date().toISOString(),
@@ -246,8 +391,11 @@ export class Registry {
 
   _migrate(data) {
     if (data.version === SCHEMA_VERSION) {
-      // Ensure traces key exists even on same-version registries
+      // Ensure keys exist even on same-version registries
       if (!data.traces) data.traces = {}
+      if (!data.history) data.history = []
+      if (!data.imports) data.imports = []
+      if (data.maxHistory == null) data.maxHistory = 100
       return data
     }
     // Pre-v4 registries migrate non-destructively but reset sync state because artifact IDs changed.
@@ -256,6 +404,7 @@ export class Registry {
       ...this._fresh(),
       phase: data.phase ?? 'unknown',
       projectName: data.projectName ?? '',
+      history: data.history ?? [],
       syncs: {}, // v4 has different artifact IDs — start fresh
       migratedFrom: data.version,
       migratedAt: new Date().toISOString(),

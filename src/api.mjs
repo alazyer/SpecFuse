@@ -28,6 +28,9 @@ import * as plan from './api/plan.mjs'
 import * as specify from './api/specify.mjs'
 import * as _change from './api/change.mjs'
 import * as schema from './api/schema.mjs'
+import * as graph from './api/graph.mjs'
+import * as batch from './api/batch.mjs'
+import * as bundle from './api/bundle.mjs'
 
 // Re-export change as 'change' (keyword-safe — _change import re-exported under the name 'change')
 export { _change as change }
@@ -39,9 +42,17 @@ export {
   ArtifactNotFoundError,
   ChangeNotVerifiedError,
   SchemaNotFoundError,
+  GraphEmptyError,
+} from './api/graph.mjs'
+
+export {
+  BundleError,
+  BundleVersionMismatchError,
+  BundleValidationError,
+  ConstitutionConflictError,
 } from './api/errors.mjs'
 
-export { plan, specify, schema }
+export { plan, specify, schema, batch, graph, bundle }
 
 export default {
   sync,
@@ -54,4 +65,7 @@ export default {
   specify,
   change: _change,
   schema,
+  batch,
+  graph,
+  bundle,
 }
