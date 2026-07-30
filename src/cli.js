@@ -17,6 +17,7 @@ import { guideCommand } from './commands/guide.js'
 import { schemaInitCommand, schemaShowCommand } from './commands/schema.js'
 import { traceCommand } from './commands/trace.js'
 import { graphCommand } from './commands/graph.js'
+import { lintCommand } from './commands/lint.js'
 
 // Plan commands (replaces BMAD)
 import {
@@ -473,6 +474,28 @@ graph.addHelpText(
   ].join('\n'),
 )
 
+// ── lint ──────────────────────────────────────────────────────────────────────
+program
+  .command('lint')
+  .description('Lint Markdown artifacts for style and structural issues')
+  .option(...rootOpt)
+  .option('--fix', 'Auto-fix whitespace and blank-line issues', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option('--fail', 'Exit code 1 on errors (CI mode)', false)
+  .option('--config <path>', 'Custom lint config file path')
+  .option('--rule <names...>', 'Run only specified rule(s)')
+  .option('--artifact <name>', 'Lint only a specific artifact')
+  .action(async (o) =>
+    lintCommand(resolve(o.root), {
+      fix: o.fix,
+      json: o.json,
+      fail: o.fail,
+      config: o.config,
+      rule: o.rule,
+      artifact: o.artifact,
+    }),
+  )
+
 // ── diff ──────────────────────────────────────────────────────────────────────
 program
   .command('diff')
@@ -547,6 +570,16 @@ program
 const batch = program
   .command('batch')
   .description('Bulk operations — review, verify, archive, and status across multiple changes')
+  .option(...rootOpt)
+  .option('--filter <pattern>', 'Filter changes by glob or regex (prefix / for regex)')
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    batchStatusCommand(resolve(o.root), {
+      filter: o.filter,
+      filterType: o.filter?.startsWith('/') ? 'regex' : 'glob',
+      json: o.json,
+    }),
+  )
 
 batch
   .command('status')

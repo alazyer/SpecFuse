@@ -25,6 +25,7 @@ export const EVENT_TYPES = {
   graph_impact: 'graph_impact',
   export: 'export',
   import: 'import',
+  lint: 'lint',
 }
 
 /**
@@ -73,6 +74,7 @@ export function formatEvent(event) {
     graph_impact: chalk.bgRed.white(' IMPCT'),
     export: chalk.bgGreen.black(' EXP  '),
     import: chalk.bgBlue.white(' IMP  '),
+    lint: chalk.bgCyan.black(' LINT '),
   }
   const badge = typeBadge[event.type] ?? chalk.bgGray.white(` ${event.type.padEnd(5)} `)
   return `${chalk.dim(time)}  ${badge}  ${event.summary}`

@@ -16,7 +16,8 @@
     "./api/batch.mjs": "./src/api/batch.mjs",
     "./api/graph.mjs": "./src/api/graph.mjs",
     "./api/errors.mjs": "./src/api/errors.mjs",
-    "./api/bundle.mjs": "./src/api/bundle.mjs"
+    "./api/bundle.mjs": "./src/api/bundle.mjs",
+    "./api/lint.mjs": "./src/api/lint.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

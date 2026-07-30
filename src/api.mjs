@@ -31,6 +31,7 @@ import * as schema from './api/schema.mjs'
 import * as graph from './api/graph.mjs'
 import * as batch from './api/batch.mjs'
 import * as bundle from './api/bundle.mjs'
+import * as lint from './api/lint.mjs'
 
 // Re-export change as 'change' (keyword-safe — _change import re-exported under the name 'change')
 export { _change as change }
@@ -50,9 +51,10 @@ export {
   BundleVersionMismatchError,
   BundleValidationError,
   ConstitutionConflictError,
+  BatchFilterError,
 } from './api/errors.mjs'
 
-export { plan, specify, schema, batch, graph, bundle }
+export { plan, specify, schema, batch, graph, bundle, lint }
 
 export default {
   sync,
@@ -68,4 +70,5 @@ export default {
   batch,
   graph,
   bundle,
+  lint,
 }
