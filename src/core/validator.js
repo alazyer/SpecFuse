@@ -20,9 +20,9 @@ import { logger } from '../utils/logger.js'
 
 // ── Result constructors (same pattern as doctor.js) ───────────────────────
 
-const PASS = (id, msg) => ({ id, state: 'PASS', message: msg })
-const WARN = (id, msg, fix) => ({ id, state: 'WARN', message: msg, remediation: fix })
-const FAIL = (id, msg, fix) => ({ id, state: 'FAIL', message: msg, remediation: fix })
+const PASS = (id, msg, file, line) => ({ id, state: 'PASS', message: msg, file, line })
+const WARN = (id, msg, fix, file, line) => ({ id, state: 'WARN', message: msg, remediation: fix, file, line })
+const FAIL = (id, msg, fix, file, line) => ({ id, state: 'FAIL', message: msg, remediation: fix, file, line })
 
 // ── Artifact section schemas ──────────────────────────────────────────────
 // Required H2 headings per artifact type, derived from templates/.
@@ -113,6 +113,7 @@ export async function checkRequiredSections(projectRoot) {
             `sections:${type}:${section.toLowerCase().replace(/\s+/g, '-')}`,
             `${spec.label} is missing required section "${section}".`,
             `Add a "## ${section}" heading to ${spec.path}.`,
+            spec.path,
           ),
         )
       } else if (extracted.trim() === '') {
@@ -121,6 +122,7 @@ export async function checkRequiredSections(projectRoot) {
             `sections:${type}:${section.toLowerCase().replace(/\s+/g, '-')}`,
             `${spec.label} section "${section}" is empty.`,
             `Add content under "## ${section}" in ${spec.path}.`,
+            spec.path,
           ),
         )
       } else {
@@ -128,6 +130,7 @@ export async function checkRequiredSections(projectRoot) {
           PASS(
             `sections:${type}:${section.toLowerCase().replace(/\s+/g, '-')}`,
             `${spec.label} has section "${section}".`,
+            spec.path,
           ),
         )
       }
@@ -575,7 +578,7 @@ async function validateFrontmatterForFile(filePath, type, artifactId) {
 
   // Check required keys
   for (const key of schema.required) {
-    if (!(key in parsed.data) || parsed.data[key] == null || parsed.data[key] === '') {
+    if (!(key in parsed.data) || parsed.data[key] === null || parsed.data[key] === undefined || parsed.data[key] === '') {
       results.push(
         WARN(
           `frontmatter:${artifactId}:${key}`,

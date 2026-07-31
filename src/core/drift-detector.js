@@ -29,6 +29,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       targetId,
       message: `${rule.source} not found.`,
       remediation: getSourceRemedy(rule.source),
+      file: rule.source,
     }
   }
 
@@ -53,6 +54,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       targetId,
       message: `${rule.source} has never been synced to ${rule.target} [${rule.section}].`,
       remediation: 'Run `specfuse sync`.',
+      file: rule.source,
     }
 
   const srcChanged = currentSourceHash !== lastSync.sourceHash
@@ -68,6 +70,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       remediation: 'Run `specfuse resolve <rule-id>` to resolve the conflict.',
       sourceContent: sourceContent ?? '',
       targetContent: managedSection,
+      file: rule.source,
     }
   if (srcChanged)
     return {
@@ -77,6 +80,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       targetId,
       message: `${rule.source} changed — [${rule.section}] is stale.`,
       remediation: 'Run `specfuse sync`.',
+      file: rule.source,
     }
   if (tgtChanged)
     return {
@@ -86,6 +90,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
       targetId,
       message: `Managed [${rule.section}] in ${rule.target} was manually edited.`,
       remediation: `Move edits outside <!-- specfuse:${rule.section}:start/end --> markers.`,
+      file: rule.target,
     }
 
   return {
@@ -95,6 +100,7 @@ async function checkSingleRuleDrift(projectRoot, registry, rule) {
     targetId,
     message: `[${rule.section}] in ${rule.target} is current.`,
     remediation: '',
+    file: rule.target,
   }
 }
 
@@ -111,6 +117,7 @@ async function checkMultiTargetDrift(projectRoot, registry, rule) {
         targetId: rule.target,
         message: 'constitution.md not found.',
         remediation: 'Run `specfuse specify init` to create constitution.md.',
+        file: '.specfuse/constitution.md',
       },
     ]
   }
@@ -150,6 +157,7 @@ async function checkMultiTargetDrift(projectRoot, registry, rule) {
           targetId,
           message: `${changeName}/proposal.md: no constitutional header injected yet.`,
           remediation: 'Run `specfuse sync`.',
+          file: `.specfuse/changes/${changeName}/proposal.md`,
         }
 
       const srcChanged = currentConstitutionHash !== lastSync.sourceHash
@@ -163,6 +171,7 @@ async function checkMultiTargetDrift(projectRoot, registry, rule) {
           targetId,
           message: `${changeName}: constitutional header is current.`,
           remediation: '',
+          file: `.specfuse/changes/${changeName}/proposal.md`,
         }
 
       const state =
@@ -182,6 +191,7 @@ async function checkMultiTargetDrift(projectRoot, registry, rule) {
           state === 'BOTH_CHANGED'
             ? 'Run `specfuse resolve <rule-id>` to resolve the conflict.'
             : 'Run `specfuse sync`.',
+        file: `.specfuse/changes/${changeName}/proposal.md`,
       }
 
       if (state === 'BOTH_CHANGED') {
