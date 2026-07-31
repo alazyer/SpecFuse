@@ -43,8 +43,9 @@ export {
   ArtifactNotFoundError,
   ChangeNotVerifiedError,
   SchemaNotFoundError,
-  GraphEmptyError,
-} from './api/graph.mjs'
+} from './api/errors.mjs'
+
+export { GraphEmptyError } from './api/graph.mjs'
 
 export {
   BundleError,

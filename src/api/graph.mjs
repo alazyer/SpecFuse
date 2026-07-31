@@ -16,6 +16,23 @@ import {
   toMermaid,
   toJson,
 } from '../core/graph.js'
+import { SpecFuseApiError, ArtifactNotFoundError } from './errors.mjs'
+
+/**
+ * Thrown when a graph operation finds no rules or artifacts to graph.
+ */
+export class GraphEmptyError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'GraphEmptyError'
+  }
+}
+
+export { SpecFuseApiError, ArtifactNotFoundError }
 
 /**
  * Resolve a project root path.
@@ -122,23 +139,3 @@ export function mermaid(graphObj) {
 export function json(graphObj) {
   return toJson(graphObj)
 }
-
-// ── Error classes ──────────────────────────────────────────────────────────────
-
-import { SpecFuseApiError, ArtifactNotFoundError } from './errors.mjs'
-
-/**
- * Thrown when a graph operation finds no rules or artifacts to graph.
- */
-export class GraphEmptyError extends SpecFuseApiError {
-  /**
-   * @param {string} message
-   * @param {{ cause?: Error }} [options]
-   */
-  constructor(message, options = {}) {
-    super(message, { cause: options.cause })
-    this.name = 'GraphEmptyError'
-  }
-}
-
-export { SpecFuseApiError, ArtifactNotFoundError }

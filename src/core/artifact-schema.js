@@ -46,7 +46,7 @@ function validateInstructionsArray(artifactId, value) {
 }
 
 function normalizeArtifacts(artifacts) {
-  if (artifacts == null) return {}
+  if (artifacts === null || artifacts === undefined) return {}
   if (typeof artifacts !== 'object' || Array.isArray(artifacts)) {
     throw new Error('artifacts must be an object keyed by artifact ID.')
   }
@@ -58,7 +58,7 @@ function normalizeArtifacts(artifacts) {
       normalized[artifactId] = validateInstructionsArray(artifactId, config)
       continue
     }
-    if (typeof config !== 'object' || config == null) {
+    if (typeof config !== 'object' || config === null || config === undefined) {
       throw new Error(`artifacts.${artifactId} must be an object or string array.`)
     }
     normalized[artifactId] = validateInstructionsArray(artifactId, config.instructions ?? [])
@@ -88,7 +88,7 @@ export async function loadArtifactSchema(projectRoot, options = {}) {
     throw new Error(`Invalid JSON in ${displayPath}: ${err.message}`)
   }
 
-  if (typeof parsed !== 'object' || parsed == null || Array.isArray(parsed)) {
+  if (typeof parsed !== 'object' || parsed === null || parsed === undefined || Array.isArray(parsed)) {
     throw new Error(`${displayPath} must contain a JSON object.`)
   }
 

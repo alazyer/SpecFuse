@@ -93,3 +93,94 @@ export class SchemaNotFoundError extends SpecFuseApiError {
     this.path = options.path ?? null
   }
 }
+
+/**
+ * Thrown when configuration access or mutation fails.
+ */
+export class ConfigError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ key?: string, value?: unknown, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'ConfigError'
+    this.key = options.key ?? null
+    this.value = options.value ?? null
+  }
+}
+
+/**
+ * Base error class for bundle-related errors.
+ */
+export class BundleError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'BundleError'
+  }
+}
+
+/**
+ * Thrown when a bundle's version is not compatible with the current SpecFuse version.
+ */
+export class BundleVersionMismatchError extends BundleError {
+  /**
+   * @param {string} message
+   * @param {{ bundleVersion?: number, supportedVersion?: number, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'BundleVersionMismatchError'
+    this.bundleVersion = options.bundleVersion ?? null
+    this.supportedVersion = options.supportedVersion ?? null
+  }
+}
+
+/**
+ * Thrown when a bundle fails validation (missing files, corrupt zip, etc.).
+ */
+export class BundleValidationError extends BundleError {
+  /**
+   * @param {string} message
+   * @param {{ missingFiles?: string[], cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'BundleValidationError'
+    this.missingFiles = options.missingFiles ?? null
+  }
+}
+
+/**
+ * Thrown when import is called without --merge or --replace.
+ */
+export class ConstitutionConflictError extends BundleError {
+  /**
+   * @param {string} message
+   * @param {{ cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'ConstitutionConflictError'
+  }
+}
+
+/**
+ * Thrown when a batch filter pattern is invalid (e.g., malformed regex).
+ */
+export class BatchFilterError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ pattern?: string, filterType?: 'glob'|'regex', cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'BatchFilterError'
+    this.pattern = options.pattern ?? null
+    this.filterType = options.filterType ?? null
+  }
+}

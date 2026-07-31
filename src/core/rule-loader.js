@@ -79,7 +79,7 @@ export async function loadRules(projectRoot, options = {}) {
 
 function validateRule(rule, src) {
   for (const f of REQUIRED) {
-    if (rule[f] == null) {
+    if (rule[f] === null || rule[f] === undefined) {
       logger.error(`Rule in ${src} missing '${f}' (id: ${rule.id ?? '?'})`)
       return null
     }
