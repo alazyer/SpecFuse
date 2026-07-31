@@ -143,6 +143,50 @@ export class Registry {
     })
   }
 
+  /**
+   * Remove sync entries by registry key.
+   * @param {string[]} keys
+   * @returns {number} Number of entries removed
+   */
+  removeSyncEntries(keys) {
+    if (!this.data.syncs) this.data.syncs = {}
+    let removed = 0
+    for (const key of keys) {
+      if (Object.hasOwn(this.data.syncs, key)) {
+        delete this.data.syncs[key]
+        removed++
+      }
+    }
+    return removed
+  }
+
+  /**
+   * Remove trace entries by story ID.
+   * @param {string[]} storyIds
+   * @returns {number} Number of entries removed
+   */
+  removeTraceEntries(storyIds) {
+    if (!this.data.traces) this.data.traces = {}
+    let removed = 0
+    for (const storyId of storyIds) {
+      if (Object.hasOwn(this.data.traces, storyId)) {
+        delete this.data.traces[storyId]
+        removed++
+      }
+    }
+    return removed
+  }
+
+  /** Clear all recorded sync state. */
+  clearSyncState() {
+    this.data.syncs = {}
+  }
+
+  /** Clear all traceability state. */
+  clearTraceState() {
+    this.data.traces = {}
+  }
+
   // ── Phase & state ─────────────────────────────────────────────────────────
   setPhase(phase) {
     this.data.phase = phase
@@ -395,7 +439,7 @@ export class Registry {
       if (!data.traces) data.traces = {}
       if (!data.history) data.history = []
       if (!data.imports) data.imports = []
-      if (data.maxHistory == null) data.maxHistory = 100
+      if (data.maxHistory === null || data.maxHistory === undefined) data.maxHistory = 100
       return data
     }
     // Pre-v4 registries migrate non-destructively but reset sync state because artifact IDs changed.
