@@ -19,6 +19,32 @@ import { traceCommand } from './commands/trace.js'
 import { graphCommand } from './commands/graph.js'
 import { lintCommand } from './commands/lint.js'
 
+// CI integration commands
+import { ciDrift, ciValidate, ciCheck, ciInit } from './commands/ci.js'
+
+// Template commands
+import {
+  templateListCommand,
+  templateShowCommand,
+  templateCopyCommand,
+  templateValidateCommand,
+} from './commands/template.js'
+
+// Clean and reset commands
+import { cleanCommand, resetCommand } from './commands/clean.js'
+
+// Config commands
+import {
+  configListCommand,
+  configGetCommand,
+  configSetCommand,
+  configValidateCommand,
+  configPathCommand,
+} from './commands/config.js'
+
+// History commands
+import { historyCommand, historySyncCommand, historyArchiveCommand } from './commands/history.js'
+
 // Plan commands (replaces BMAD)
 import {
   planPrd,
@@ -81,6 +107,11 @@ const pluginsOpt = ['--allow-plugins', 'Allow user plugin rules in CI', false]
 const schemaOpt = [
   '--schema <path>',
   'Artifact schema file (default: .specfuse/artifact-schema.json)',
+]
+const ciFormatOpt = [
+  '--format <fmt>',
+  'CI output format: github | junit | sarif | auto',
+  'auto',
 ]
 
 function levenshtein(a, b) {
@@ -178,6 +209,75 @@ schema
   .option(...rootOpt)
   .option(...schemaOpt)
   .action(async (o) => schemaShowCommand(resolve(o.root), { schemaPath: o.schema }))
+
+// ── ci ──────────────────────────────────────────────────────────────────────────
+const ci = program
+  .command('ci')
+  .description('CI integration — drift/validate checks with CI-optimized output formats')
+
+ci
+  .command('drift')
+  .description('Run drift check with CI-optimized output. Exit 1 on BOTH_CHANGED conflicts.')
+  .option(...rootOpt)
+  .option(...ciFormatOpt)
+  .option(...pluginsOpt)
+  .option('--fail', 'Exit 1 on warnings too (strict CI mode)', false)
+  .option('--output <path>', 'Write output to a file instead of stdout')
+  .action(async (o) =>
+    ciDrift(resolve(o.root), {
+      format: o.format,
+      allowPlugins: o.allowPlugins,
+      failOnWarn: o.fail,
+      output: o.output,
+    }),
+  )
+
+ci
+  .command('validate')
+  .description('Run validation with CI-optimized output. Exit 1 on failures.')
+  .option(...rootOpt)
+  .option(...ciFormatOpt)
+  .option('--artifact <type>', 'Validate one type: prd|arch|design-system|proposal|story|all', 'all')
+  .option('--fail', 'Exit 1 on warnings too (strict CI mode)', false)
+  .option('--output <path>', 'Write output to a file instead of stdout')
+  .action(async (o) =>
+    ciValidate(resolve(o.root), {
+      format: o.format,
+      artifact: o.artifact,
+      failOnWarn: o.fail,
+      output: o.output,
+    }),
+  )
+
+ci
+  .command('check')
+  .description('Combined drift + validation check. Exit 1 on any FAIL-state.')
+  .option(...rootOpt)
+  .option(...ciFormatOpt)
+  .option('--artifact <type>', 'Validate one type: prd|arch|design-system|proposal|story|all', 'all')
+  .option(...pluginsOpt)
+  .option('--fail', 'Exit 1 on warnings too (strict CI mode)', false)
+  .option('--output <path>', 'Write output to a file instead of stdout')
+  .action(async (o) =>
+    ciCheck(resolve(o.root), {
+      format: o.format,
+      artifact: o.artifact,
+      allowPlugins: o.allowPlugins,
+      failOnWarn: o.fail,
+      output: o.output,
+    }),
+  )
+
+ci
+  .command('init')
+  .description('Generate a GitHub Actions workflow file for SpecFuse CI')
+  .option(...rootOpt)
+  .option('--github', 'Generate GitHub Actions workflow (default, only option supported)', true)
+  .option('--output <path>', 'Output file path (default: .github/workflows/specfuse-ci.yml)')
+  .option('--force', 'Overwrite an existing workflow file', false)
+  .action(async (o) =>
+    ciInit(resolve(o.root), { github: o.github, output: o.output, force: o.force }),
+  )
 
 // ── plan ──────────────────────────────────────────────────────────────────────
 const plan = program
@@ -347,6 +447,43 @@ change.addHelpText(
   ].join('\n'),
 )
 
+// ── template ───────────────────────────────────────────────────────────────────
+const template = program
+  .command('template')
+  .description('Template management — list, show, copy, and validate artifact templates')
+
+template
+  .command('list')
+  .alias('ls')
+  .description('List all available templates with override status')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => templateListCommand(resolve(o.root), { json: o.json }))
+
+template
+  .command('show <name>')
+  .description('Display a template with optional variable documentation')
+  .option(...rootOpt)
+  .option('--vars', 'Show documented template variables', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (name, o) =>
+    templateShowCommand(resolve(o.root), name, { vars: o.vars, json: o.json }),
+  )
+
+template
+  .command('copy <name>')
+  .description('Copy a built-in template to .specfuse/templates/ for customization')
+  .option(...rootOpt)
+  .option('--force', 'Overwrite an existing custom template', false)
+  .action(async (name, o) => templateCopyCommand(resolve(o.root), name, { force: o.force }))
+
+template
+  .command('validate')
+  .description('Validate all custom templates in .specfuse/templates/')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => templateValidateCommand(resolve(o.root), { json: o.json }))
+
 // ── sync ──────────────────────────────────────────────────────────────────────
 const sync = program
   .command('sync')
@@ -360,12 +497,19 @@ const sync = program
   .option('--rule <ids...>', 'Run specific rule IDs only')
   .option('--force', 'Overwrite BOTH_CHANGED pairs without prompting (old behavior)', false)
   .option('--resolve', 'Run interactive resolver for BOTH_CHANGED pairs before continuing', false)
+  .option(
+    '--no-recover',
+    'Decline automatic recovery of an interrupted prior sync (abort with a clear error instead)',
+  )
+  .option('--json', 'Machine-readable JSON output (passes passA, passB, warnings, recovery)', false)
   .action(async (o) =>
     syncCommand(resolve(o.root), {
       rules: o.rule,
       allowPlugins: o.allowPlugins,
       force: o.force,
       resolve: o.resolve,
+      noRecover: o.recover === false, // --no-recover → o.recover === false
+      json: o.json,
     }),
   )
 
@@ -378,6 +522,7 @@ sync.addHelpText(
     '  $ specfuse sync --rule plan:arch→constitution:plan-decisions',
     '  $ specfuse sync --force   # overwrite BOTH_CHANGED pairs',
     '  $ specfuse sync --resolve # resolve conflicts interactively',
+    '  $ specfuse sync --no-recover  # abort if an interrupted sync is pending',
   ].join('\n'),
 )
 
@@ -553,6 +698,177 @@ program
   .option('--json', 'Machine-readable JSON output', false)
   .action(async (o) => doctorCommand(resolve(o.root), { json: o.json }))
 
+// ── config ─────────────────────────────────────────────────────────────────────
+const config = program
+  .command('config')
+  .description('Configuration management — list, get, set, validate, and locate config files')
+
+config
+  .command('list')
+  .alias('ls')
+  .description('Show all configuration values (registry, schema, rules)')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option(...schemaOpt)
+  .action(async (o) =>
+    configListCommand(resolve(o.root), { json: o.json, schemaPath: o.schema }),
+  )
+
+config
+  .command('get <key>')
+  .description('Get a single configuration value by dotted key (e.g. registry.phase)')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option(...schemaOpt)
+  .action(async (key, o) =>
+    configGetCommand(key, resolve(o.root), { json: o.json, schemaPath: o.schema }),
+  )
+
+config
+  .command('set <key> <value>')
+  .description('Set a mutable configuration value by dotted key')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option(...schemaOpt)
+  .action(async (key, value, o) =>
+    configSetCommand(key, value, resolve(o.root), { json: o.json, schemaPath: o.schema }),
+  )
+
+config
+  .command('validate')
+  .description('Validate the current configuration')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .option(...schemaOpt)
+  .action(async (o) =>
+    configValidateCommand(resolve(o.root), { json: o.json, schemaPath: o.schema }),
+  )
+
+config
+  .command('path')
+  .description('Show resolved config file paths (registry, schema, rules)')
+  .option(...rootOpt)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) => configPathCommand(resolve(o.root), { json: o.json }))
+
+// ── clean ──────────────────────────────────────────────────────────────────────
+program
+  .command('clean')
+  .description('Remove orphaned files, stale registry entries, and empty directories')
+  .option(...rootOpt)
+  .option('--dry-run', 'Preview what would be removed without writing', false)
+  .option('--force', 'Skip confirmation prompts', false)
+  .option('--registry', 'Clean only stale registry entries', false)
+  .option('--orphans', 'Clean only orphaned files and empty directories', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    cleanCommand(resolve(o.root), {
+      dryRun: o.dryRun,
+      force: o.force,
+      registry: o.registry,
+      orphans: o.orphans,
+      json: o.json,
+    }),
+  )
+
+// ── reset ──────────────────────────────────────────────────────────────────────
+program
+  .command('reset')
+  .description('Reset project state (preserves plan/ and changes/archive/ by default)')
+  .option(...rootOpt)
+  .option('--dry-run', 'Preview what would be reset (default behavior)', true)
+  .option('--hard', 'Remove ALL SpecFuse artifacts including plan and archive', false)
+  .option('--force', 'Skip confirmation prompt', false)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    resetCommand(resolve(o.root), {
+      dryRun: o.dryRun,
+      hard: o.hard,
+      force: o.force,
+      json: o.json,
+    }),
+  )
+
+// ── history ────────────────────────────────────────────────────────────────────
+const history = program
+  .command('history')
+  .description('Audit log — show and filter recorded spec events')
+  .option(...rootOpt)
+  .option('--since <date>', 'Show events since this date/time')
+  .option('--until <date>', 'Show events up to this date/time')
+  .option('--limit <n>', 'Maximum number of events to show', (v) => parseInt(v, 10), 20)
+  .option('--type <type>', 'Filter by event type')
+  .option('--json', 'Machine-readable JSON output', false)
+  .option('--verbose', 'Show full event details', false)
+  // Bare `specfuse history` (no subcommand) shows recent events.
+  .action(async (o) =>
+    historyCommand(resolve(o.root), {
+      since: o.since,
+      until: o.until,
+      limit: o.limit,
+      type: o.type,
+      json: o.json,
+      verbose: o.verbose,
+    }),
+  )
+
+history
+  .command('list')
+  .alias('ls')
+  .description('Show recent history events with optional filtering (default subcommand)')
+  .option(...rootOpt)
+  .option('--since <date>', 'Show events since this date/time')
+  .option('--until <date>', 'Show events up to this date/time')
+  .option('--limit <n>', 'Maximum number of events to show', (v) => parseInt(v, 10), 20)
+  .option('--type <type>', 'Filter by event type')
+  .option('--json', 'Machine-readable JSON output', false)
+  .option('--verbose', 'Show full event details', false)
+  .action(async (o) =>
+    historyCommand(resolve(o.root), {
+      since: o.since,
+      until: o.until,
+      limit: o.limit,
+      type: o.type,
+      json: o.json,
+      verbose: o.verbose,
+    }),
+  )
+
+history
+  .command('sync')
+  .description('Show only sync history events')
+  .option(...rootOpt)
+  .option('--since <date>', 'Show events since this date/time')
+  .option('--until <date>', 'Show events up to this date/time')
+  .option('--limit <n>', 'Maximum number of events to show', (v) => parseInt(v, 10), 20)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    historySyncCommand(resolve(o.root), {
+      since: o.since,
+      until: o.until,
+      limit: o.limit,
+      json: o.json,
+    }),
+  )
+
+history
+  .command('archive')
+  .description('Show only archive history events')
+  .option(...rootOpt)
+  .option('--since <date>', 'Show events since this date/time')
+  .option('--until <date>', 'Show events up to this date/time')
+  .option('--limit <n>', 'Maximum number of events to show', (v) => parseInt(v, 10), 20)
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (o) =>
+    historyArchiveCommand(resolve(o.root), {
+      since: o.since,
+      until: o.until,
+      limit: o.limit,
+      json: o.json,
+    }),
+  )
+
+// Install-hooks stays below the new top-level commands
 // ── install-hooks ──────────────────────────────────────────────────────────────
 program
   .command('install-hooks')
