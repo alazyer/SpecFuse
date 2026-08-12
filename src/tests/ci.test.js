@@ -5,6 +5,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 import { ciDrift, ciValidate, ciCheck, ciInit } from '../commands/ci.js'
+import { init } from '../api/ci.mjs'
+import { SpecFuseApiError, CiUnsupportedModeError } from '../api/errors.mjs'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -205,6 +207,33 @@ describe('ciCheck', () => {
 
 // ─── ciInit ───────────────────────────────────────────────────────────────
 
+describe('ci API init unsupported mode', () => {
+  let root
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'sf-ci-api-init-test-'))
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('rejects with typed SpecFuseApiError when github=false', async () => {
+    await assert.rejects(
+      async () => init({ root, github: false }),
+      (error) => {
+        assert.ok(error instanceof Error)
+        assert.ok(error instanceof SpecFuseApiError)
+        assert.ok(error instanceof CiUnsupportedModeError)
+        assert.equal(error.name, 'CiUnsupportedModeError')
+        assert.equal(error.code, 'CI_UNSUPPORTED_MODE')
+        assert.equal(error.supportedMode, 'github')
+        assert.equal(error.requestedMode, 'disabled')
+        assert.match(error.message, /Only GitHub Actions workflow is supported/)
+        return true
+      },
+    )
+  })
+})
+
 describe('ciInit', () => {
   let root
   beforeEach(async () => {
@@ -259,10 +288,11 @@ describe('ciInit', () => {
     assert.match(content, /cron:/)
   })
 
-  test('default output path is .github/workflows/specfuse.yml', async () => {
-    // ciInit with no output option uses projectRoot/.github/workflows/specfuse.yml
+  test('default output path is .github/workflows/specfuse-ci.yml', async () => {
+    // ciInit with no output option uses projectRoot/.github/workflows/specfuse-ci.yml
+    // (matches docs/ci-integration.md)
     const { path } = await ciInit(root)
-    assert.ok(path.endsWith(join('.github', 'workflows', 'specfuse.yml')))
+    assert.ok(path.endsWith(join('.github', 'workflows', 'specfuse-ci.yml')))
   })
 
   test('throws when github=false (only GitHub Actions supported)', async () => {

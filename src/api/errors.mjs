@@ -184,3 +184,90 @@ export class BatchFilterError extends SpecFuseApiError {
     this.filterType = options.filterType ?? null
   }
 }
+
+/**
+ * Thrown when the registry is corrupt, has an unexpected shape, or carries an
+ * incompatible schema version that could not be migrated. The offending file is
+ * quarantined (renamed aside, never deleted) before a fresh registry is
+ * initialized, so consumers can recover by hand.
+ *
+ * `category` is one of `'corruption'` (unparseable JSON or invalid shape) or
+ * `'version_mismatch'` (unknown/future schema version). The field is stable so
+ * downstream taxonomies (e.g. the sweep W3 failure-observability work) can map
+ * into it without rework.
+ */
+export class RegistryError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ quarantinedPath?: string, originalVersion?: string, category?: 'corruption'|'version_mismatch', cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'RegistryError'
+    this.quarantinedPath = options.quarantinedPath ?? null
+    this.originalVersion = options.originalVersion ?? null
+    this.category = options.category ?? 'corruption'
+  }
+}
+
+/**
+ * Thrown when a registry writer cannot acquire the advisory lock within the
+ * configured timeout. Identifies the holding process so the operator can decide
+ * whether to wait, increase the timeout, or clear a stale lock.
+ */
+export class RegistryLockedError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ lockPath?: string, holderPid?: number, holderCommand?: string, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'RegistryLockedError'
+    this.lockPath = options.lockPath ?? null
+    this.holderPid = options.holderPid ?? null
+    this.holderCommand = options.holderCommand ?? null
+  }
+}
+
+/**
+ * Thrown when `specfuse sync` is run with `--no-recover` and an interrupted
+ * prior sync is detected (a stale `pendingSync` marker is present). The
+ * operator declined automatic recovery; the run is aborted so state can be
+ * inspected manually first. Re-running without `--no-recover` reconciles
+ * automatically.
+ *
+ * `code` is the stable machine identifier `INTERRUPTED_SYNC_PENDING` so
+ * automation can branch on it without parsing the message.
+ */
+export class InterruptedSyncPendingError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ startedAt?: string, manifestEntries?: number, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'InterruptedSyncPendingError'
+    this.code = 'INTERRUPTED_SYNC_PENDING'
+    this.startedAt = options.startedAt ?? null
+    this.manifestEntries = options.manifestEntries ?? null
+  }
+}
+
+/**
+ * Thrown when CI init is asked to generate a non-GitHub workflow mode.
+ *
+ * `code` is the stable machine identifier `CI_UNSUPPORTED_MODE`.
+ */
+export class CiUnsupportedModeError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ supportedMode?: string, requestedMode?: string, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'CiUnsupportedModeError'
+    this.code = 'CI_UNSUPPORTED_MODE'
+    this.supportedMode = options.supportedMode ?? 'github'
+    this.requestedMode = options.requestedMode ?? null
+  }
+}
