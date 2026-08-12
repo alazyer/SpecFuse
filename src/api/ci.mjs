@@ -12,7 +12,7 @@
  */
 
 import { resolve } from 'path'
-import { ciDrift, ciValidate, ciCheck, ciInit } from '../commands/ci.js'
+import { ciDrift, ciValidate, ciCheck, ciInit } from '../core/ci.js'
 import { formatAuto, formatGitHub, formatJUnit, formatSarif, detectFormat } from '../core/ci-output.js'
 
 /**
