@@ -1,6 +1,7 @@
 import { Registry } from '../core/registry.js'
 import { loadRules } from '../core/rule-loader.js'
 import { checkAllDrift } from '../core/drift-detector.js'
+import { diagnoseArtifactRoots } from '../core/artifact-diagnostics.js'
 import { logger } from '../utils/logger.js'
 import chalk from 'chalk'
 
@@ -24,9 +25,26 @@ export async function driftCommand(projectRoot, options = {}) {
   const rules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
   const results = await checkAllDrift(projectRoot, registry, rules)
 
+  const artifactRootStatus = await diagnoseArtifactRoots(projectRoot)
+
   if (options.json) {
-    console.log(JSON.stringify({ results }, null, 2))
+    console.log(JSON.stringify({
+      results,
+      artifactRoots: artifactRootStatus,
+    }, null, 2))
     return
+  }
+
+  // Report artifact root diagnostics
+  if (artifactRootStatus.diagnostics.length > 0) {
+    logger.header('Artifact Root Diagnostics')
+    for (const diag of artifactRootStatus.diagnostics) {
+      const color = diag.severity === 'error' ? chalk.red : diag.severity === 'warning' ? chalk.yellow : chalk.blue
+      console.log(`  ${color(`[${diag.code}]`)} ${diag.severity.toUpperCase()}`)
+      console.log(`     ${diag.message}`)
+      if (diag.severity === 'warning') driftCount++
+      logger.br()
+    }
   }
 
   logger.header('SpecFuse Drift  v2')

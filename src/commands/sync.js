@@ -1,7 +1,5 @@
-import { Registry } from '../core/registry.js'
+import { selectSyncRules, executeSync, tallySyncResults } from '../core/sync-service.js'
 import { loadRules } from '../core/rule-loader.js'
-import { runTwoPassSync } from '../core/sync-engine.js'
-import { checkAllDrift } from '../core/drift-detector.js'
 import { computeConflict, applyResolution } from '../core/resolver.js'
 import { InterruptedSyncPendingError } from '../api/errors.mjs'
 import { logger } from '../utils/logger.js'
@@ -25,18 +23,13 @@ export async function syncCommand(projectRoot, options = {}) {
     }
   }
 
-  const registry = new Registry(projectRoot)
-
-  // Rule selection happens before the lock (read-only) so the lock is held
-  // only across the load-mutate-save region — the part that races with watch
-  // or a concurrent manual sync. runTwoPassSync mutates the registry and saves
-  // internally, so the whole run must sit inside withLock to serialize writers.
+  // Rule selection validation happens upfront for CLI UX (error reporting for invalid rule IDs)
   const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-
-  let rules
+  let selectedRules = allRules
   if (options.rules?.length && !options.rules.includes('all')) {
-    rules = allRules.filter((r) => options.rules.includes(r.id))
-    if (rules.length === 0) {
+    const { selected, unmatched } = selectSyncRules(allRules, options.rules)
+    selectedRules = selected
+    if (selectedRules.length === 0) {
       logger.error(`No rules matched: ${options.rules.map((r) => chalk.bold(r)).join(', ')}`)
       logger.br()
       logger.info('Available rule IDs:')
@@ -46,18 +39,15 @@ export async function syncCommand(projectRoot, options = {}) {
       logger.br()
       process.exit(1)
     }
-    const unmatched = options.rules.filter((id) => !allRules.some((r) => r.id === id))
     if (unmatched.length) {
       logger.warn(
         `Unknown rule ID(s): ${unmatched.map((u) => chalk.bold(u)).join(', ')} — skipping.`,
       )
       logger.br()
     }
-  } else {
-    rules = allRules
   }
 
-  // Build the onConflict callback for --resolve mode
+  // Build the onConflict callback for --resolve mode (CLI-only interactive behavior)
   let onConflict = null
   if (options.resolve && !options.force) {
     onConflict = async (rule, driftResult) => {
@@ -118,21 +108,22 @@ export async function syncCommand(projectRoot, options = {}) {
   const jsonMode = !!options.json
   const origLog = console.log
   if (jsonMode) console.log = () => {}
-  let passA, passB, warnings, recovery
+  let passA, passB, warnings, recovery, tally
   try {
-    const result = await registry.withLock(async (reg) => {
-      await reg.load()
-      reg.setLoadedRules(rules)
-      return runTwoPassSync(projectRoot, reg, rules, {
-        force: !!options.force,
-        onConflict,
-        noRecover: !!options.noRecover,
-      })
+    // Use shared core sync service for parity with API sync
+    const result = await executeSync({
+      root: projectRoot,
+      rules: options.rules,
+      allowPlugins: options.allowPlugins,
+      force: options.force,
+      onConflict,
+      noRecover: options.noRecover,
     })
     passA = result.passA
     passB = result.passB
-    warnings = result.warnings ?? []
-    recovery = result.recovery ?? null
+    warnings = result.warnings
+    recovery = result.recovery
+    tally = result.tally
   } catch (err) {
     // --no-recover with an interrupted prior sync: surface a clear error in
     // both human and JSON modes instead of a raw stack trace. The registry
@@ -171,7 +162,6 @@ export async function syncCommand(projectRoot, options = {}) {
   // with zero `changed` rules is distinguishable from a change run via the
   // per-rule `state` / top-level tally.
   if (jsonMode) {
-    const all = [...passA, ...passB]
     console.log(
       JSON.stringify(
         {
@@ -179,7 +169,7 @@ export async function syncCommand(projectRoot, options = {}) {
           passB,
           warnings,
           recovery,
-          tally: tallyByState(all),
+          tally,
         },
         null,
         2,
@@ -201,7 +191,6 @@ export async function syncCommand(projectRoot, options = {}) {
 
   // ── Summary ─────────────────────────────────────────────────────────────
   const all = [...passA, ...passB]
-  const tally = tallyByState(all)
   const bothChangedSkipped = all.filter(
     (r) => r.state === 'skipped_conflict' || (!r.changed && r.message.includes('BOTH_CHANGED')),
   )

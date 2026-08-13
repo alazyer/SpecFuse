@@ -10,21 +10,19 @@
  *   --artifact <n>  Lint only a specific artifact
  */
 
-import { resolve, relative, join, dirname } from 'path'
-import { readFile, writeFile, readdir } from 'fs/promises'
+import { join } from 'path'
+import { readFile, writeFile } from 'fs/promises'
 import chalk from 'chalk'
 
 import { Registry } from '../core/registry.js'
 import { recordEvent, EVENT_TYPES } from '../core/history.js'
+import { READ_ERROR_CODES, WARNING_CODES, withStructuredCode } from '../core/observability-codes.js'
 import {
   loadLintConfig,
   lintFiles,
-  lintContent,
   fixContent,
-  collectMarkdownFiles,
-  DEFAULT_RULE_CONFIG,
+  collectMarkdownFilesDetailed,
 } from '../core/linter.js'
-import { pathExists } from '../utils/fs.js'
 import { logger } from '../utils/logger.js'
 
 /**
@@ -51,15 +49,22 @@ export async function lintCommand(projectRoot, options = {}) {
   // Auto-fix mode
   if (fixMode) {
     const specDir = join(projectRoot, '.specfuse')
-    const files = await collectMarkdownFiles(specDir, projectRoot)
-
-    // Also include root-level .specfuse/*.md files
-    const rootMdFiles = (await readdir(specDir).catch(() => [])).filter((f) =>
-      /\.md$/i.test(f),
-    )
-
-    const allFiles = [...files, ...rootMdFiles.map((f) => join(specDir, f))]
+    const scan = await collectMarkdownFilesDetailed(specDir, projectRoot)
+    const allFiles = scan.files
     let fixedCount = 0
+    const warnings = scan.issues.map((issue) => {
+      const isFile = issue.path.endsWith('.md')
+      return withStructuredCode({
+        file: issue.path,
+        message: isFile
+          ? `Unreadable file skipped: ${issue.path}`
+          : `Unreadable directory skipped: ${issue.path}`,
+        error: issue.error ?? null,
+        severity: 'warning',
+      }, WARNING_CODES.UNREADABLE_FILE_SKIPPED, {
+        readCode: READ_ERROR_CODES.UNREADABLE,
+      })
+    })
 
     for (const absPath of allFiles) {
       try {
@@ -86,6 +91,7 @@ export async function lintCommand(projectRoot, options = {}) {
             results: [],
             fixedCount,
             fileCount: allFiles.length,
+            warnings,
             fixMode: true,
           },
           null,
@@ -99,6 +105,9 @@ export async function lintCommand(projectRoot, options = {}) {
       logger.success(`Fixed ${fixedCount} file(s).`)
     } else {
       logger.success('No fixable issues found. ✓')
+    }
+    if (warnings.length > 0) {
+      logger.warn(`${warnings.length} unreadable path(s) were skipped during fix.`)
     }
     logger.br()
     return

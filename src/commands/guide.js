@@ -5,6 +5,7 @@ import { pathExists } from '../utils/fs.js'
 import { detectPhase } from '../core/phase-detector.js'
 import { getPhaseAdvice } from '../core/workflow-advice.js'
 import { logger } from '../utils/logger.js'
+import { ARTIFACT_ROOTS } from '../core/registry.js'
 
 const PERSONAS = new Set(['new-user', 'planner', 'developer', 'qa'])
 const PERSONA_LABEL = {
@@ -220,7 +221,10 @@ export async function guideCommand(projectRoot, options = {}) {
           warnings,
           isGitRepo: state.isGitRepo,
           activeChanges: state.activeChanges,
+          activeChangesRoot: ARTIFACT_ROOTS.NATIVE_CHANGES_ACTIVE,
           archivedChanges: state.archivedChanges,
+          archivedChangesRoot: ARTIFACT_ROOTS.NATIVE_CHANGES_ARCHIVE,
+          governanceChangesRoot: ARTIFACT_ROOTS.GOVERNANCE_CHANGES,
           storyCount: state.storyCount,
           doNowSteps,
           nextSteps,

@@ -93,23 +93,42 @@ function freshRegistry() {
 }
 
 /**
- * v4 canonical artifact paths — entirely under .specfuse/.
+ * v4 canonical artifact roots and paths — entirely under .specfuse/.
  * No external tool paths required.
  *
- * Plan artifacts:   .specfuse/plan/
- * Change artifacts: .specfuse/changes/
- * Constitution:     .specfuse/constitution.md
+ * Native runtime root:    .specfuse/
+ * Plan artifacts:         .specfuse/plan/
+ * Change artifacts:       .specfuse/changes/          (active native changes)
+ * Change archive:         .specfuse/changes/archive/  (archived native changes)
+ * Constitution:           .specfuse/constitution.md
+ *
+ * Governance root (OpenSpec): openspec/
+ * - Changes live under openspec/changes/ and are NOT native runtime artifacts
+ * - Specs live under openspec/specs/ and are governance documents
+ * Native runtime commands (specfuse change new/list/etc.) never read/write
+ * the openspec/ governance root directly; only sync/import workflows interact
+ * with governance artifacts explicitly.
  */
+export const ARTIFACT_ROOTS = {
+  NATIVE: '.specfuse',
+  NATIVE_PLAN: '.specfuse/plan',
+  NATIVE_CHANGES_ACTIVE: '.specfuse/changes',
+  NATIVE_CHANGES_ARCHIVE: '.specfuse/changes/archive',
+  GOVERNANCE_OPENSPEC: 'openspec',
+  GOVERNANCE_CHANGES: 'openspec/changes',
+  GOVERNANCE_SPECS: 'openspec/specs',
+}
+
 export const ARTIFACT_PATHS = {
-  'plan:prd': '.specfuse/plan/prd.md',
-  'plan:arch': '.specfuse/plan/architecture.md',
-  'plan:design-system': '.specfuse/plan/design/system.md',
-  'plan:design-flows': '.specfuse/plan/design/flows',
-  'plan:design-screens': '.specfuse/plan/design/screens',
-  'plan:stories': '.specfuse/plan/stories', // directory
-  'changes:active': '.specfuse/changes', // directory
-  'changes:archive': '.specfuse/changes/archive', // directory
-  constitution: '.specfuse/constitution.md',
+  'plan:prd': `${ARTIFACT_ROOTS.NATIVE_PLAN}/prd.md`,
+  'plan:arch': `${ARTIFACT_ROOTS.NATIVE_PLAN}/architecture.md`,
+  'plan:design-system': `${ARTIFACT_ROOTS.NATIVE_PLAN}/design/system.md`,
+  'plan:design-flows': `${ARTIFACT_ROOTS.NATIVE_PLAN}/design/flows`,
+  'plan:design-screens': `${ARTIFACT_ROOTS.NATIVE_PLAN}/design/screens`,
+  'plan:stories': `${ARTIFACT_ROOTS.NATIVE_PLAN}/stories`, // directory
+  'changes:active': ARTIFACT_ROOTS.NATIVE_CHANGES_ACTIVE, // directory
+  'changes:archive': ARTIFACT_ROOTS.NATIVE_CHANGES_ARCHIVE, // directory
+  constitution: `${ARTIFACT_ROOTS.NATIVE}/constitution.md`,
 }
 
 const DEFAULT_ARTIFACTS = {
@@ -410,6 +429,21 @@ export class Registry {
   }
   getArtifactPathLabel(id) {
     return this.getArtifact(id)?.path ?? null
+  }
+  /**
+   * Get the canonical root type for a given artifact path:
+   * - 'native': runtime artifact under .specfuse/
+   * - 'governance': OpenSpec governance artifact under openspec/
+   * - 'unknown': path does not match known roots
+   * @param {string} path
+   * @returns {'native' | 'governance' | 'archive' | 'unknown'}
+   */
+  getArtifactRootType(path) {
+    if (!path) return 'unknown'
+    if (path.startsWith(ARTIFACT_ROOTS.NATIVE_CHANGES_ARCHIVE)) return 'archive'
+    if (path.startsWith(ARTIFACT_ROOTS.NATIVE)) return 'native'
+    if (path.startsWith(ARTIFACT_ROOTS.GOVERNANCE_OPENSPEC)) return 'governance'
+    return 'unknown'
   }
   getDefaultArtifacts() {
     return DEFAULT_ARTIFACTS

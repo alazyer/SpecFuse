@@ -31,7 +31,7 @@ const PHASE_ADVICE = {
     steps: [
       {
         command: 'specfuse change new <name>',
-        reason: 'Create proposal/design/tasks templates for the next change.',
+        reason: 'Create proposal/design/tasks templates under .specfuse/changes/ for the next change.',
       },
       {
         command: 'specfuse sync',

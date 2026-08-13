@@ -2,23 +2,18 @@
  * SpecFuse sync/observability API functions.
  *
  * Extracted from src/api.mjs for module consistency.
- * No behavioral changes — pure refactor.
+ * Uses shared core sync-service for behavior parity with CLI.
  */
 
 import { resolve as resolvePath } from 'path'
 import { Registry } from '../core/registry.js'
 import { loadRules } from '../core/rule-loader.js'
-import { runTwoPassSync } from '../core/sync-engine.js'
+import { executeSync, selectSyncRules } from '../core/sync-service.js'
 import { checkAllDrift } from '../core/drift-detector.js'
+import { diagnoseArtifactRoots } from '../core/artifact-diagnostics.js'
 import { computeDiffWithProposed, groupByFile, applyDiff, formatStat } from '../core/differ.js'
 import { applyResolution } from '../core/resolver.js'
 import { detectPhase } from '../core/phase-detector.js'
-
-function selectRules(allRules, ruleIds = []) {
-  return ruleIds?.length && !ruleIds.includes('all')
-    ? allRules.filter((rule) => ruleIds.includes(rule.id))
-    : allRules
-}
 
 /**
  * Run sync rules in two passes.
@@ -37,28 +32,19 @@ function selectRules(allRules, ruleIds = []) {
  * `INTERRUPTED_SYNC_PENDING`) instead of being reconciled, so an operator can
  * inspect state first.
  *
+ * Uses shared core sync-service to ensure parity with CLI sync command.
+ *
  * @param {{ root?: string, rules?: string[], allowPlugins?: boolean, force?: boolean, noRecover?: boolean }} [options]
- * @returns {Promise<{ passA: object[], passB: object[], warnings: object[], recovery: object|null }>}
+ * @returns {Promise<{ passA: object[], passB: object[], warnings: object[], recovery: object|null, tally: object }>}
  */
 export async function sync(options = {}) {
-  const projectRoot = resolvePath(options.root ?? '.')
-  const registry = new Registry(projectRoot)
-
-  // Guard the load-mutate-save sequence (runTwoPassSync mutates the registry
-  // and saves internally) with the advisory lock so concurrent writers — e.g.
-  // watch + a manual sync — are serialized and neither mutation is silently lost.
-  const result = await registry.withLock(async (reg) => {
-    await reg.load()
-
-    const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-    const rules = selectRules(allRules, options.rules)
-
-    return runTwoPassSync(projectRoot, reg, rules, {
-      force: !!options.force,
-      noRecover: !!options.noRecover,
-    })
+  return executeSync({
+    root: resolvePath(options.root ?? '.'),
+    rules: options.rules,
+    allowPlugins: options.allowPlugins,
+    force: options.force,
+    noRecover: options.noRecover,
   })
-  return result
 }
 
 /**
@@ -86,7 +72,7 @@ export async function drift(options = {}) {
 export async function diff(options = {}) {
   const projectRoot = resolvePath(options.root ?? '.')
   const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const rules = selectRules(allRules, options.rules)
+  const { selected: rules } = selectSyncRules(allRules, options.rules)
 
   const { diffs, proposedFiles } = await computeDiffWithProposed(projectRoot, rules)
   const filePatches = groupByFile(diffs, proposedFiles, projectRoot)
