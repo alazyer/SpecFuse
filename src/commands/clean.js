@@ -165,20 +165,27 @@ export async function cleanCommand(projectRoot, options = {}) {
         }
 
         const registry = new Registry(projectRoot)
-        await registry.load()
+        await registry.withLock(async (reg) => {
+          await reg.load()
 
-        const syncsRemoved = registry.removeSyncEntries(stale.syncs)
-        const tracesRemoved = registry.removeTraceEntries(stale.traces)
-        result.syncs.removed = stale.syncs
-        result.syncs.count = syncsRemoved
-        result.traces.removed = stale.traces
-        result.traces.count = tracesRemoved
+          const syncsRemoved = reg.removeSyncEntries(stale.syncs)
+          const tracesRemoved = reg.removeTraceEntries(stale.traces)
+          result.syncs.removed = stale.syncs
+          result.syncs.count = syncsRemoved
+          result.traces.removed = stale.traces
+          result.traces.count = tracesRemoved
 
-        recordEvent(registry, EVENT_TYPES.clean, `Removed ${syncsRemoved} stale sync(s), ${tracesRemoved} stale trace(s)`, {
-          syncsRemoved,
-          tracesRemoved,
+          recordEvent(
+            reg,
+            EVENT_TYPES.clean,
+            `Removed ${syncsRemoved} stale sync(s), ${tracesRemoved} stale trace(s)`,
+            {
+              syncsRemoved,
+              tracesRemoved,
+            },
+          )
+          await reg.save()
         })
-        await registry.save()
       }
     }
   }

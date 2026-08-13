@@ -54,19 +54,6 @@ export async function graphCommand(projectRoot, options = {}) {
     }
     graph = result.graph
     isImpact = true
-    recordEvent(registry, EVENT_TYPES.graph_impact, `Impact analysis for: ${options.impact}`, {
-      file: options.impact,
-      affectedNodes: graph.nodes.size,
-    })
-  }
-
-  // Record graph_generate event (unless impact already recorded one)
-  if (!isImpact) {
-    recordEvent(registry, EVENT_TYPES.graph_generate, 'Generated dependency graph', {
-      nodes: graph.nodes.size,
-      edges: graph.edges.length,
-      format: options.mermaid ? 'mermaid' : options.json ? 'json' : 'dot',
-    })
   }
 
   // Select serializer
@@ -86,7 +73,15 @@ export async function graphCommand(projectRoot, options = {}) {
   if (output === null) {
     logger.info(chalk.dim('No rules found — nothing to graph.'))
     logger.br()
-    await registry.save()
+    await registry.withLock(async (reg) => {
+      await reg.load()
+      recordEvent(reg, EVENT_TYPES.graph_generate, 'Generated dependency graph', {
+        nodes: graph.nodes.size,
+        edges: graph.edges.length,
+        format: options.mermaid ? 'mermaid' : options.json ? 'json' : 'dot',
+      })
+      await reg.save()
+    })
     return
   }
 
@@ -99,5 +94,20 @@ export async function graphCommand(projectRoot, options = {}) {
     console.log(output)
   }
 
-  await registry.save()
+  await registry.withLock(async (reg) => {
+    await reg.load()
+    if (isImpact) {
+      recordEvent(reg, EVENT_TYPES.graph_impact, `Impact analysis for: ${options.impact}`, {
+        file: options.impact,
+        affectedNodes: graph.nodes.size,
+      })
+    } else {
+      recordEvent(reg, EVENT_TYPES.graph_generate, 'Generated dependency graph', {
+        nodes: graph.nodes.size,
+        edges: graph.edges.length,
+        format: options.mermaid ? 'mermaid' : options.json ? 'json' : 'dot',
+      })
+    }
+    await reg.save()
+  })
 }

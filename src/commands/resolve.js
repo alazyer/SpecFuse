@@ -1,7 +1,8 @@
 import { Registry } from '../core/registry.js'
 import { loadRules } from '../core/rule-loader.js'
 import { checkAllDrift } from '../core/drift-detector.js'
-import { computeConflict, applyResolution } from '../core/resolver.js'
+import { computeConflict } from '../core/resolver.js'
+import { resolve as resolveSyncOp } from '../api/sync-ops.mjs'
 import { logger } from '../utils/logger.js'
 import chalk from 'chalk'
 import { createInterface } from 'readline'
@@ -104,26 +105,12 @@ export async function resolveCommand(projectRoot, options = {}) {
 
   if (choice === '1') {
     // Accept source
-    const result = await applyResolution(
-      rule,
-      driftResult,
-      { type: 'source' },
-      projectRoot,
-      registry,
-    )
-    await registry.save()
+    const result = await resolveSyncOp({ root: projectRoot, ruleId, choice: 'source' })
     logger.br()
     logger.success(result.message)
   } else if (choice === '2') {
     // Keep target
-    const result = await applyResolution(
-      rule,
-      driftResult,
-      { type: 'target' },
-      projectRoot,
-      registry,
-    )
-    await registry.save()
+    const result = await resolveSyncOp({ root: projectRoot, ruleId, choice: 'target' })
     logger.br()
     logger.success(result.message)
   } else if (choice === '3') {
@@ -175,14 +162,12 @@ export async function resolveCommand(projectRoot, options = {}) {
 
       try { unlinkSync(tmpFile) } catch { /* ignore */ }
 
-      const resolutionResult = await applyResolution(
-        rule,
-        driftResult,
-        { type: 'merge', mergedContent: edited },
-        projectRoot,
-        registry,
-      )
-      await registry.save()
+      const resolutionResult = await resolveSyncOp({
+        root: projectRoot,
+        ruleId,
+        choice: 'merge',
+        mergedContent: edited,
+      })
       logger.br()
       logger.success(resolutionResult.message)
     } catch (err) {

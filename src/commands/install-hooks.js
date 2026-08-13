@@ -74,9 +74,11 @@ export async function installHooksCommand(projectRoot) {
   // Update registry
   const { Registry } = await import('../core/registry.js')
   const registry = new Registry(projectRoot)
-  await registry.load()
-  registry.setHooksInstalled(true)
-  await registry.save()
+  await registry.withLock(async (reg) => {
+    await reg.load()
+    reg.setHooksInstalled(true)
+    await reg.save()
+  })
 
   logger.br()
   logger.success('Git hooks installed successfully.')
@@ -136,9 +138,11 @@ export async function uninstallHooksCommand(projectRoot) {
   // Update registry
   const { Registry } = await import('../core/registry.js')
   const registry = new Registry(projectRoot)
-  await registry.load()
-  registry.setHooksInstalled(false)
-  await registry.save()
+  await registry.withLock(async (reg) => {
+    await reg.load()
+    reg.setHooksInstalled(false)
+    await reg.save()
+  })
 
   logger.br()
   logger.success('Git hooks uninstalled.')

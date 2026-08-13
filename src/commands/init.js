@@ -25,7 +25,11 @@ const USER_RULES_LINES = [
   '  //     const c = await ctx.read(".specfuse/plan/custom.md");',
   '  //     return c ? ctx.extractH2Section(c, "My Section") : null;',
   '  //   },',
-  '  //   transform(d, ctx) { return "Updated " + ctx.today() + "\\n\\n" + d; },',
+  '  //   // Determinism contract: transform() MUST be a pure function of',
+  '  //   // its source content. Do NOT embed volatile metadata like ctx.today()',
+  '  //   // in the returned content — it would break idempotent re-syncs.',
+  '  //   // The synced timestamp is recorded in registry.json syncs[].syncedAt.',
+  '  //   transform(d, ctx) { return "### Custom Rules\\n\\n" + d; },',
   '  // },',
   '];',
 ]
@@ -39,47 +43,56 @@ export async function initCommand(projectRoot, options = {}) {
   logger.br()
 
   const registry = new Registry(projectRoot)
-  await registry.load()
 
   const projectName = options.name ?? basename(projectRoot)
-  const { phase, evidence } = await detectPhase(projectRoot)
+  const { phase } = await detectPhase(projectRoot)
 
   logger.phase(`Detected phase: ${chalk.bold(phase)}`)
   logger.info(describePhase(phase))
   logger.br()
 
-  if (registry.data.initializedAt && registry.data.phase !== 'unknown' && !options.force) {
+  let alreadyInitialized = false
+  await registry.withLock(async (reg) => {
+    await reg.load()
+
+    if (reg.data.initializedAt && reg.data.phase !== 'unknown' && !options.force) {
+      alreadyInitialized = true
+      return
+    }
+
+    reg.setPhase(phase)
+    reg.setProjectName(projectName)
+
+    // Create .specfuse/ scaffold
+    await ensureDir(join(projectRoot, '.specfuse', 'plan', 'stories'))
+    await ensureDir(join(projectRoot, '.specfuse', 'plan', 'design', 'flows'))
+    await ensureDir(join(projectRoot, '.specfuse', 'plan', 'design', 'screens'))
+    await ensureDir(join(projectRoot, '.specfuse', 'changes', 'archive'))
+
+    // Plugin rules template
+    const rulesPath = join(projectRoot, '.specfuse', 'rules.mjs')
+    if (!pathExists(rulesPath)) {
+      await writeFileAtomic(rulesPath, USER_RULES_LINES.join('\n') + '\n')
+      logger.success('Created .specfuse/rules.mjs (plugin rules template)')
+    }
+
+    // .gitignore hint for registry
+    const gitignorePath = join(projectRoot, '.specfuse', '.gitignore')
+    if (!pathExists(gitignorePath)) {
+      await writeFileAtomic(
+        gitignorePath,
+        '# Commit registry.json to share sync state with your team\n',
+      )
+    }
+
+    await reg.save()
+  })
+
+  if (alreadyInitialized) {
     logger.warn('SpecFuse already initialized. Use --force to re-initialize.')
     logger.br()
     return
   }
-
-  registry.setPhase(phase)
-  registry.setProjectName(projectName)
-
-  // Create .specfuse/ scaffold
-  await ensureDir(join(projectRoot, '.specfuse', 'plan', 'stories'))
-  await ensureDir(join(projectRoot, '.specfuse', 'plan', 'design', 'flows'))
-  await ensureDir(join(projectRoot, '.specfuse', 'plan', 'design', 'screens'))
-  await ensureDir(join(projectRoot, '.specfuse', 'changes', 'archive'))
-
-  // Plugin rules template
-  const rulesPath = join(projectRoot, '.specfuse', 'rules.mjs')
-  if (!pathExists(rulesPath)) {
-    await writeFileAtomic(rulesPath, USER_RULES_LINES.join('\n') + '\n')
-    logger.success('Created .specfuse/rules.mjs (plugin rules template)')
-  }
-
-  // .gitignore hint for registry
-  const gitignorePath = join(projectRoot, '.specfuse', '.gitignore')
-  if (!pathExists(gitignorePath)) {
-    await writeFileAtomic(
-      gitignorePath,
-      '# Commit registry.json to share sync state with your team\n',
-    )
-  }
-
-  await registry.save()
 
   logger.br()
   logger.header('Initialization Complete')

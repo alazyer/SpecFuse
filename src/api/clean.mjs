@@ -86,20 +86,27 @@ export async function clean(root, options = {}) {
         result.traces.count = stale.traces.length
       } else {
         const registry = new Registry(projectRoot)
-        await registry.load()
+        await registry.withLock(async (reg) => {
+          await reg.load()
 
-        const syncsRemoved = registry.removeSyncEntries(stale.syncs)
-        const tracesRemoved = registry.removeTraceEntries(stale.traces)
-        result.syncs.removed = stale.syncs
-        result.syncs.count = syncsRemoved
-        result.traces.removed = stale.traces
-        result.traces.count = tracesRemoved
+          const syncsRemoved = reg.removeSyncEntries(stale.syncs)
+          const tracesRemoved = reg.removeTraceEntries(stale.traces)
+          result.syncs.removed = stale.syncs
+          result.syncs.count = syncsRemoved
+          result.traces.removed = stale.traces
+          result.traces.count = tracesRemoved
 
-        recordEvent(registry, EVENT_TYPES.clean, `Removed ${syncsRemoved} stale sync(s), ${tracesRemoved} stale trace(s)`, {
-          syncsRemoved,
-          tracesRemoved,
+          recordEvent(
+            reg,
+            EVENT_TYPES.clean,
+            `Removed ${syncsRemoved} stale sync(s), ${tracesRemoved} stale trace(s)`,
+            {
+              syncsRemoved,
+              tracesRemoved,
+            },
+          )
+          await reg.save()
         })
-        await registry.save()
       }
     }
   }
@@ -183,19 +190,26 @@ export async function reset(root, options = {}) {
 
   // Perform actual reset
   const registry = new Registry(projectRoot)
-  await registry.load()
-  recordEvent(registry, EVENT_TYPES.reset, hard ? 'Hard reset — all artifacts removed' : 'Soft reset — preserving plan/ and archive/', { hard })
 
   if (hard) {
     await removeDirContents(specDir)
     result.removed = ['.specfuse/ (all contents)']
   } else {
     // Soft reset: preserve plan/ and archive/
-    registry.clearSyncState()
-    registry.clearTraceState()
-    registry.data.artifacts = {}
-    registry.data.phase = 'unknown'
-    await registry.save()
+    await registry.withLock(async (reg) => {
+      await reg.load()
+      recordEvent(
+        reg,
+        EVENT_TYPES.reset,
+        'Soft reset — preserving plan/ and archive/',
+        { hard },
+      )
+      reg.clearSyncState()
+      reg.clearTraceState()
+      reg.data.artifacts = {}
+      reg.data.phase = 'unknown'
+      await reg.save()
+    })
 
     // Remove constitution.md
     const constitutionPath = join(specDir, 'constitution.md')
