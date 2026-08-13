@@ -26,6 +26,10 @@ export const EVENT_TYPES = {
   export: 'export',
   import: 'import',
   lint: 'lint',
+  // Recovery of an interrupted sync/archive (Improvement 2). Recorded when the
+  // engine reconciles a stale pendingSync/pendingArchive marker so operators
+  // can forensically trace which runs were recovered.
+  recovery: 'recovery',
 }
 
 /**

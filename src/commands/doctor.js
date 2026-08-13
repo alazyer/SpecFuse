@@ -1,6 +1,6 @@
 import { join } from 'path'
-import { readFileSafe, pathExists } from '../utils/fs.js'
-import { Registry } from '../core/registry.js'
+import { readFileSafe, pathExists, readLockFile, isPidAlive } from '../utils/fs.js'
+import { Registry, SCHEMA_VERSION } from '../core/registry.js'
 import { loadRules } from '../core/rule-loader.js'
 import { logger } from '../utils/logger.js'
 import chalk from 'chalk'
@@ -10,6 +10,18 @@ import { detectUiImpact, parseFrontmatterDocument } from '../utils/change-artifa
 const PASS = (id, msg) => ({ id, state: 'PASS', message: msg })
 const WARN = (id, msg, fix) => ({ id, state: 'WARN', message: msg, remediation: fix })
 const FAIL = (id, msg, fix) => ({ id, state: 'FAIL', message: msg, remediation: fix })
+
+const ROOT_REFERENCE_FILES = [
+  'src/core/registry.js',
+  'src/core/sync-engine.js',
+  'src/commands/status.js',
+  'src/core/workflow-advice.js',
+]
+
+const LEGACY_ROOT_REFERENCES = [
+  'openspec/changes/',
+  'constitution.md  (project root, human-visible)',
+]
 
 async function checkRegistrySchema(root) {
   const path = join(root, '.specfuse', 'registry.json')
@@ -34,6 +46,67 @@ async function checkRegistrySchema(root) {
   }
 }
 
+/**
+ * Report the state of the registry advisory lock: no lock (PASS), a stale lock
+ * held by a dead process (WARN), or an active lock held by a running process
+ * (WARN — informational, not an error). This is a passive read and never
+ * acquires the lock itself.
+ */
+async function checkRegistryLock(root) {
+  const lockPath = join(root, '.specfuse', 'registry.lock')
+  if (!pathExists(lockPath)) return PASS('registry-lock', 'No active registry lock.')
+  const holder = await readLockFile(lockPath)
+  if (!holder)
+    return WARN(
+      'registry-lock',
+      `registry.lock exists but is unreadable.`,
+      `Remove ${lockPath} if no specfuse process is running.`,
+    )
+  const alive = await isPidAlive(holder.pid)
+  if (!alive)
+    return WARN(
+      'registry-lock',
+      `Stale registry lock from PID ${holder.pid} (${holder.command}) — process is no longer running.`,
+      `It will be reclaimed on the next writer, or remove ${lockPath} manually.`,
+    )
+  return WARN(
+    'registry-lock',
+    `Registry lock held by PID ${holder.pid} (${holder.command}).`,
+    'Wait for the in-flight operation to finish, or clear the lock if the holder has crashed.',
+  )
+}
+
+/**
+ * Report any quarantined registry files left by corrupt-JSON or version-mismatch
+ * recovery. Each quarantine is a WARN with the file path and a recovery hint,
+ * since the canonical registry.json was already re-initialized.
+ */
+async function checkQuarantinedRegistries(root) {
+  const dir = join(root, '.specfuse')
+  let entries = []
+  try {
+    const all = await readdir(dir, { withFileTypes: true })
+    entries = all.filter(
+      (e) =>
+        e.isFile() &&
+        (e.name.startsWith('registry.json.corrupt-') ||
+          e.name.startsWith('registry.json.pre-migrate-') ||
+          e.name.startsWith('registry.json.future-version-') ||
+          e.name.startsWith('registry.json.unknown-version-')),
+    )
+  } catch {
+    return PASS('registry-quarantine', '.specfuse/ not present — no quarantined files.')
+  }
+  if (!entries.length) return PASS('registry-quarantine', 'No quarantined registry files.')
+
+  const names = entries.map((e) => e.name).join(', ')
+  return WARN(
+    'registry-quarantine',
+    `${entries.length} quarantined registry file(s): ${names}. Current schema v${SCHEMA_VERSION}.`,
+    'The canonical registry.json was re-initialized. Inspect quarantined files to recover data, then delete them.',
+  )
+}
+
 async function checkConstitution(root) {
   const path = join(root, '.specfuse', 'constitution.md')
   if (!pathExists(path))
@@ -54,7 +127,7 @@ async function checkConstitution(root) {
   return PASS('constitution', `constitution.md found with ${starts} managed section(s).`)
 }
 
-async function checkPlanArtifacts(root) {
+function checkPlanArtifacts(root) {
   const planDir = join(root, '.specfuse', 'plan')
   if (!pathExists(planDir))
     return WARN(
@@ -109,6 +182,72 @@ async function checkChangesStructure(root) {
   return PASS('changes-structure', '.specfuse/changes/ exists and is ready.')
 }
 
+async function checkArtifactRootConsistency(root) {
+  const hits = []
+
+  for (const relativePath of ROOT_REFERENCE_FILES) {
+    const filePath = join(root, relativePath)
+    const content = await readFileSafe(filePath)
+    if (!content) continue
+
+    for (const reference of LEGACY_ROOT_REFERENCES) {
+      if (content.includes(reference)) hits.push(`${relativePath}: ${reference}`)
+    }
+  }
+
+  if (hits.length) {
+    return WARN(
+      'artifact-root-consistency',
+      `Legacy artifact-root references found in runtime source: ${hits.join('; ')}.`,
+      'Update runtime messages to use the canonical .specfuse/ paths.',
+    )
+  }
+
+  return PASS(
+    'artifact-root-consistency',
+    'Runtime source references use canonical .specfuse/ paths.',
+  )
+}
+
+async function checkUnexpectedChangeRoots(root) {
+  const roots = []
+  const nativeChanges = join(root, '.specfuse', 'changes')
+  const nativeArchive = join(nativeChanges, 'archive')
+  const legacyChanges = join(root, 'openspec', 'changes')
+
+  if (pathExists(nativeChanges)) {
+    const entries = await readdir(nativeChanges, { withFileTypes: true }).catch(() => [])
+    const active = entries.filter((entry) => entry.isDirectory() && entry.name !== 'archive')
+    if (active.length)
+      roots.push(`native:${active.length} active change dir(s) under .specfuse/changes/`)
+    const archiveEntries = await readdir(nativeArchive, { withFileTypes: true }).catch(() => [])
+    const archive = archiveEntries.filter((entry) => entry.isDirectory())
+    if (archive.length) roots.push(`native-archive:${archive.length} archived change dir(s)`)
+  }
+
+  if (pathExists(legacyChanges)) {
+    const entries = await readdir(legacyChanges, { withFileTypes: true }).catch(() => [])
+    const active = entries.filter((entry) => entry.isDirectory() && entry.name !== 'archive')
+    if (active.length)
+      roots.push(`legacy:${active.length} active change dir(s) under openspec/changes/`)
+  }
+
+  if (!roots.length) {
+    return PASS('unexpected-change-roots', 'Only canonical .specfuse/ change roots are present.')
+  }
+
+  const legacyRoot = roots.find((item) => item.startsWith('legacy:'))
+  if (legacyRoot) {
+    return WARN(
+      'unexpected-change-roots',
+      `Unexpected non-native change root detected: ${legacyRoot.replace('legacy:', '')}.`,
+      'Move runtime change work into .specfuse/changes/ and keep openspec/ for governance artifacts.',
+    )
+  }
+
+  return PASS('unexpected-change-roots', roots.join(' • '))
+}
+
 async function checkNestedSections(root) {
   const content = await readFileSafe(join(root, '.specfuse', 'constitution.md'))
   if (!content) return PASS('nested-sections', 'constitution.md not present — skipping.')
@@ -145,6 +284,48 @@ async function checkOrphanedSyncs(root) {
         'Run `specfuse sync` — registry is rebuilt on each sync.',
       )
     : PASS('orphaned-syncs', 'No orphaned sync records.')
+}
+
+/**
+ * Report a stale `pendingSync` marker left by an interrupted sync. Read-only —
+ * does not acquire the lock or attempt recovery. A stale marker means the last
+ * sync was interrupted before it could clear the marker; the next `specfuse
+ * sync` reconciles automatically (or `--no-recover` to inspect first).
+ */
+async function checkStalePendingSync(root) {
+  const reg = new Registry(root)
+  await reg.load()
+  const marker = reg.getPendingSync()
+  if (!marker) return PASS('pending-sync', 'No interrupted sync marker.')
+
+  const startedAt = marker.startedAt ?? 'an unknown time'
+  const entries = Array.isArray(marker?.manifest) ? marker.manifest.length : 0
+  return WARN(
+    'pending-sync',
+    `Interrupted sync marker present (started ${startedAt}, ${entries} pending write(s)).`,
+    'Run `specfuse sync` to reconcile automatically, or `specfuse sync --no-recover` to inspect state first.',
+  )
+}
+
+/**
+ * Report a stale `pendingArchive` marker left by an interrupted change
+ * archive. Read-only — does not acquire the lock or attempt recovery. The next
+ * `specfuse change archive <name>` for the same change completes the record
+ * without duplicating the archived directory.
+ */
+async function checkStalePendingArchive(root) {
+  const reg = new Registry(root)
+  await reg.load()
+  const marker = reg.getPendingArchive()
+  if (!marker) return PASS('pending-archive', 'No interrupted archive marker.')
+
+  const change = marker.change ?? 'unknown'
+  const onDisk = pathExists(marker.archiveDir ?? '')
+  return WARN(
+    'pending-archive',
+    `Interrupted archive marker present for change '${change}' (archived copy ${onDisk ? 'present on disk' : 'missing'}).`,
+    `Re-run \`specfuse change archive ${change}\` to complete the record${onDisk ? ' without re-copying' : ' (the archive will be re-created from scratch)'}.`,
+  )
 }
 
 async function checkPluginSyntax(root) {
@@ -230,11 +411,17 @@ async function checkUnverifiedChanges(root) {
 export async function doctorCommand(projectRoot, options = {}) {
   const results = await Promise.all([
     checkRegistrySchema(projectRoot),
+    checkRegistryLock(projectRoot),
+    checkQuarantinedRegistries(projectRoot),
     checkConstitution(projectRoot),
     checkPlanArtifacts(projectRoot),
     checkChangesStructure(projectRoot),
+    checkArtifactRootConsistency(projectRoot),
+    checkUnexpectedChangeRoots(projectRoot),
     checkNestedSections(projectRoot),
     checkOrphanedSyncs(projectRoot),
+    checkStalePendingSync(projectRoot),
+    checkStalePendingArchive(projectRoot),
     checkPluginSyntax(projectRoot),
     checkDesignSystem(projectRoot),
     checkUnverifiedChanges(projectRoot),

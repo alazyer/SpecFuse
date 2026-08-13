@@ -10,12 +10,7 @@ import { Registry } from '../core/registry.js'
 import { loadRules } from '../core/rule-loader.js'
 import { runTwoPassSync } from '../core/sync-engine.js'
 import { checkAllDrift } from '../core/drift-detector.js'
-import {
-  computeDiffWithProposed,
-  groupByFile,
-  applyDiff,
-  formatStat,
-} from '../core/differ.js'
+import { computeDiffWithProposed, groupByFile, applyDiff, formatStat } from '../core/differ.js'
 import { applyResolution } from '../core/resolver.js'
 import { detectPhase } from '../core/phase-detector.js'
 
@@ -28,18 +23,42 @@ function selectRules(allRules, ruleIds = []) {
 /**
  * Run sync rules in two passes.
  *
- * @param {{ root?: string, rules?: string[], allowPlugins?: boolean, force?: boolean }} [options]
- * @returns {Promise<{ passA: object[], passB: object[] }>}
+ * Each result in `passA`/`passB` carries a structured `state` field, one of:
+ * `'changed'`, `'unchanged'`, `'forced_overwrite'`, `'skipped'`,
+ * `'skipped_conflict'`, or `'failed'`. The `unchanged` state marks a true
+ * no-op — the proposed content was byte-identical to the on-disk managed
+ * section, so no file was written and `syncedAt` was not bumped.
+ *
+ * The result also carries a `recovery` field: `null` on a clean run, or an
+ * object describing a reconciliation that was performed for a prior interrupted
+ * sync (what was replayed/rolled back, the strategy used). Pass
+ * `{ noRecover: true }` to decline automatic recovery — an interrupted prior
+ * sync is then surfaced as an `InterruptedSyncPendingError` (code
+ * `INTERRUPTED_SYNC_PENDING`) instead of being reconciled, so an operator can
+ * inspect state first.
+ *
+ * @param {{ root?: string, rules?: string[], allowPlugins?: boolean, force?: boolean, noRecover?: boolean }} [options]
+ * @returns {Promise<{ passA: object[], passB: object[], warnings: object[], recovery: object|null }>}
  */
 export async function sync(options = {}) {
   const projectRoot = resolvePath(options.root ?? '.')
   const registry = new Registry(projectRoot)
-  await registry.load()
 
-  const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const rules = selectRules(allRules, options.rules)
+  // Guard the load-mutate-save sequence (runTwoPassSync mutates the registry
+  // and saves internally) with the advisory lock so concurrent writers — e.g.
+  // watch + a manual sync — are serialized and neither mutation is silently lost.
+  const result = await registry.withLock(async (reg) => {
+    await reg.load()
 
-  return runTwoPassSync(projectRoot, registry, rules, { force: !!options.force })
+    const allRules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
+    const rules = selectRules(allRules, options.rules)
+
+    return runTwoPassSync(projectRoot, reg, rules, {
+      force: !!options.force,
+      noRecover: !!options.noRecover,
+    })
+  })
+  return result
 }
 
 /**
@@ -147,34 +166,41 @@ export async function resolve(options = {}) {
   }
 
   const registry = new Registry(projectRoot)
-  await registry.load()
 
-  const rules = await loadRules(projectRoot)
-  const driftResults = await checkAllDrift(projectRoot, registry, rules)
+  // Guard the load-mutate-save sequence (applyResolution mutates the registry,
+  // then we save) with the advisory lock so a concurrent writer cannot
+  // interleave and silently lose the resolution.
+  const result = await registry.withLock(async (reg) => {
+    await reg.load()
 
-  const driftResult = driftResults.find((r) => r.ruleId === ruleId)
-  if (!driftResult) {
-    throw new Error(`Rule not found: ${ruleId}`)
-  }
+    const rules = await loadRules(projectRoot)
+    const driftResults = await checkAllDrift(projectRoot, reg, rules)
 
-  if (driftResult.state !== 'BOTH_CHANGED') {
-    throw new Error(
-      `Rule ${ruleId} is not in a conflicted state (current: ${driftResult.state}). Only BOTH_CHANGED rules can be resolved.`,
-    )
-  }
+    const driftResult = driftResults.find((r) => r.ruleId === ruleId)
+    if (!driftResult) {
+      throw new Error(`Rule not found: ${ruleId}`)
+    }
 
-  const rule = rules.find((r) => ruleId === r.id || ruleId.startsWith(r.id + ':'))
-  if (!rule) {
-    throw new Error(`No loaded rule matches ${ruleId}.`)
-  }
+    if (driftResult.state !== 'BOTH_CHANGED') {
+      throw new Error(
+        `Rule ${ruleId} is not in a conflicted state (current: ${driftResult.state}). Only BOTH_CHANGED rules can be resolved.`,
+      )
+    }
 
-  const resolution = { type: choice }
-  if (choice === 'merge') {
-    resolution.mergedContent = mergedContent
-  }
+    const rule = rules.find((r) => ruleId === r.id || ruleId.startsWith(r.id + ':'))
+    if (!rule) {
+      throw new Error(`No loaded rule matches ${ruleId}.`)
+    }
 
-  const result = await applyResolution(rule, driftResult, resolution, projectRoot, registry)
-  await registry.save()
+    const resolution = { type: choice }
+    if (choice === 'merge') {
+      resolution.mergedContent = mergedContent
+    }
 
+    const resolved = await applyResolution(rule, driftResult, resolution, projectRoot, reg)
+    await reg.save()
+
+    return resolved
+  })
   return result
 }
