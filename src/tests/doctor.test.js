@@ -276,6 +276,72 @@ describe('checkChangesStructure (changes-structure)', () => {
   })
 })
 
+// ─── checkArtifactRootConsistency ─────────────────────────────────────────
+
+describe('checkArtifactRootConsistency (artifact-root-consistency)', () => {
+  let root
+  beforeEach(async () => {
+    root = await makeFixture()
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('PASS when runtime source uses canonical .specfuse/ references', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await mkdir(join(root, 'src', 'core'), { recursive: true })
+    await writeFile(
+      join(root, 'src', 'core', 'sync-engine.js'),
+      "const msg = 'No active change directories found in .specfuse/changes/.'\n",
+    )
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'artifact-root-consistency')
+    assert.equal(check.state, 'PASS')
+  })
+
+  test('WARN when runtime source still references openspec/changes/', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await mkdir(join(root, 'src', 'core'), { recursive: true })
+    await writeFile(
+      join(root, 'src', 'core', 'sync-engine.js'),
+      "const msg = 'No active change directories found in openspec/changes/.'\n",
+    )
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'artifact-root-consistency')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes('openspec/changes/'))
+  })
+})
+
+// ─── checkUnexpectedChangeRoots ───────────────────────────────────────────
+
+describe('checkUnexpectedChangeRoots (unexpected-change-roots)', () => {
+  let root
+  beforeEach(async () => {
+    root = await makeFixture()
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('PASS when only canonical .specfuse/ roots exist', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await mkdir(join(root, '.specfuse', 'changes', 'alpha'), { recursive: true })
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'unexpected-change-roots')
+    assert.equal(check.state, 'PASS')
+  })
+
+  test('WARN when openspec/changes contains active change dirs', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await mkdir(join(root, 'openspec', 'changes', 'legacy-change'), { recursive: true })
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'unexpected-change-roots')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes('openspec/changes'))
+  })
+})
+
 // ─── checkNestedSections ────────────────────────────────────────────────
 
 describe('checkNestedSections (nested-sections)', () => {
@@ -514,9 +580,9 @@ describe('checkUnverifiedChanges (unverified-changes)', () => {
   })
 })
 
-// ─── All 9 checks run ──────────────────────────────────────────────────
+// ─── checkRegistryLock ─────────────────────────────────────────────────
 
-describe('doctorCommand — all 9 checks', () => {
+describe('checkRegistryLock (registry-lock)', () => {
   let root
   beforeEach(async () => {
     root = await makeFixture()
@@ -525,18 +591,112 @@ describe('doctorCommand — all 9 checks', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  test('runs exactly 9 diagnostic checks', async () => {
+  test('PASS when no lock file exists', async () => {
     await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
     const { results } = await runDoctor(root)
-    assert.equal(results.length, 9, 'must run exactly 9 checks')
+    const check = findCheck(results, 'registry-lock')
+    assert.equal(check.state, 'PASS')
+    assert.ok(check.message.includes('No active'))
+  })
+
+  test('WARN when a stale lock references a dead PID', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    // A PID that is almost certainly not running on a test runner.
+    await writeFile(
+      join(root, '.specfuse', 'registry.lock'),
+      JSON.stringify({ pid: 999999, command: 'specfuse sync', acquiredAt: Date.now() }) + '\n',
+    )
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'registry-lock')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes('Stale'))
+    assert.ok(check.remediation.includes('registry.lock'))
+  })
+
+  test('WARN when a lock is held by a live PID (informational)', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await writeFile(
+      join(root, '.specfuse', 'registry.lock'),
+      JSON.stringify({ pid: process.pid, command: 'specfuse sync', acquiredAt: Date.now() }) + '\n',
+    )
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'registry-lock')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes(String(process.pid)))
+  })
+})
+
+// ─── checkQuarantinedRegistries ────────────────────────────────────────
+
+describe('checkQuarantinedRegistries (registry-quarantine)', () => {
+  let root
+  beforeEach(async () => {
+    root = await makeFixture()
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('PASS when no quarantined files exist', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'registry-quarantine')
+    assert.equal(check.state, 'PASS')
+    assert.ok(check.message.includes('No quarantined'))
+  })
+
+  test('WARN when a corrupt quarantine file exists', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await writeFile(join(root, '.specfuse', 'registry.json.corrupt-1699999999999'), '{not valid')
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'registry-quarantine')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes('corrupt-'))
+    assert.ok(check.remediation.includes('recover'))
+  })
+
+  test('WARN when a pre-migrate backup exists', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    await writeFile(
+      join(root, '.specfuse', 'registry.json.pre-migrate-3.0.0-1699999999999'),
+      '{"version":"3.0.0"}',
+    )
+    const { results } = await runDoctor(root)
+    const check = findCheck(results, 'registry-quarantine')
+    assert.equal(check.state, 'WARN')
+    assert.ok(check.message.includes('pre-migrate-'))
+  })
+})
+
+// ─── All checks run ────────────────────────────────────────────────────
+
+describe('doctorCommand — all 15 checks', () => {
+  let root
+  beforeEach(async () => {
+    root = await makeFixture()
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('runs exactly 15 diagnostic checks', async () => {
+    await writeFile(join(root, '.specfuse', 'registry.json'), JSON.stringify({ version: '4.0.0' }))
+    const { results } = await runDoctor(root)
+    assert.equal(results.length, 15, 'must run exactly 15 checks')
 
     const expectedIds = [
       'registry-schema',
+      'registry-lock',
+      'registry-quarantine',
       'constitution',
       'plan-artifacts',
       'changes-structure',
+      'artifact-root-consistency',
+      'unexpected-change-roots',
       'nested-sections',
       'orphaned-syncs',
+      'pending-sync',
+      'pending-archive',
       'plugin-syntax',
       'design-system',
       'unverified-changes',
@@ -570,7 +730,7 @@ describe('doctorCommand — all 9 checks', () => {
     await writeFile(join(root, '.specfuse', 'plan', 'prd.md'), '# PRD\n')
     await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), '# Arch\n')
 
-    const { healthy, exitCode } = await runDoctor(root)
+    const { exitCode } = await runDoctor(root)
     // healthy depends on FAIL checks only — WARNs don't make it unhealthy
     assert.equal(exitCode, 0, 'no FAILs → exit code 0')
   })

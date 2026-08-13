@@ -341,7 +341,7 @@ describe('Two-pass sync engine', () => {
       sources: ['.specfuse/plan/broken.md'],
       target: '.specfuse/constitution.md',
       section: 'broken',
-      async extract() {
+      extract() {
         throw new Error('Intentional failure')
       },
       transform() {
@@ -351,7 +351,7 @@ describe('Two-pass sync engine', () => {
 
     const { passA, passB } = await runTwoPassSync(root, registry, [...rules, brokenRule])
     const broken = passA.find((r) => r.ruleId === brokenRule.id)
-    assert.ok(broken?.message.startsWith('Error:'), 'broken rule must appear as error in passA')
+    assert.equal(broken?.state, 'failed', 'broken rule must appear as failed in passA')
     assert.equal(passB.length, 0, 'Pass B must not run when Pass A has errors')
   })
 
@@ -464,7 +464,7 @@ describe('Registry v4', () => {
     assert.equal(registry.data.phase, 'unknown')
   })
 
-  test('migrates v2 registry to v4 with fresh syncs', async () => {
+  test('migrates v2 registry to v4 preserving fields non-destructively', async () => {
     await mkdir(join(root, '.specfuse'), { recursive: true })
     await writeFile(
       join(root, '.specfuse', 'registry.json'),
@@ -474,16 +474,29 @@ describe('Registry v4', () => {
         detectedFrameworks: ['bmad'],
         artifacts: {},
         syncs: { 'docs/architecture.md→constitution.md': { sourceHash: 'abc' } },
+        history: [{ id: 'evt-001', type: 'init', summary: 'Initialized' }],
       }),
     )
     const registry = new Registry(root)
     await registry.load()
     assert.equal(registry.data.version, '4.0.0')
     assert.equal(registry.data.migratedFrom, '2.0.0')
-    assert.deepEqual(
-      registry.data.syncs,
-      {},
-      'v4 migration must reset syncs (different artifact IDs)',
+    assert.ok(registry.data.migratedAt, 'migratedAt timestamp must be recorded')
+    // Non-destructive migration: syncs are preserved (not wiped to {})
+    // per the registry-concurrency-safety spec. A re-sync rebuilds correct keys;
+    // orphaned sync records are surfaced by `specfuse doctor` — silent data loss
+    // is never the chosen behavior.
+    assert.deepEqual(registry.data.syncs, {
+      'docs/architecture.md→constitution.md': { sourceHash: 'abc' },
+    })
+    // history is preserved too
+    assert.equal(registry.data.history.length, 1)
+    assert.equal(registry.data.history[0].summary, 'Initialized')
+    // A backup of the old registry must exist for manual recovery.
+    const entries = await readdir(join(root, '.specfuse'))
+    assert.ok(
+      entries.some((e) => e.startsWith('registry.json.pre-migrate-2.0.0')),
+      'old registry must be backed up before migration',
     )
   })
 
