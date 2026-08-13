@@ -36,6 +36,10 @@ export async function driftCommand(projectRoot, options = {}) {
   }
 
   // Report artifact root diagnostics
+  let driftCount = 0,
+    syncedCount = 0,
+    missingCount = 0
+
   if (artifactRootStatus.diagnostics.length > 0) {
     logger.header('Artifact Root Diagnostics')
     for (const diag of artifactRootStatus.diagnostics) {
@@ -55,10 +59,6 @@ export async function driftCommand(projectRoot, options = {}) {
     logger.br()
     return
   }
-
-  let driftCount = 0,
-    syncedCount = 0,
-    missingCount = 0
 
   for (const r of results) {
     const badge = BADGE[r.state] ?? chalk.bgGray.white(' UNKNOWN   ')
