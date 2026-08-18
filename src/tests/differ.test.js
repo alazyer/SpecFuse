@@ -11,6 +11,8 @@ import {
   formatStat,
 } from '../core/differ.js'
 import { Registry } from '../core/registry.js'
+import { checkAllDrift } from '../core/drift-detector.js'
+import { hashContent } from '../utils/markdown.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -733,5 +735,410 @@ describe('groupByFile + computeDiffWithProposed integration', () => {
     assert.equal(grouped.length, 1, 'all rules target the same file')
     assert.equal(grouped[0].sections.length, 2, 'should have 2 sections')
     assert.equal(grouped[0].hasChanges, true)
+  })
+})
+
+// ─── diff --apply registry sync ─────────────────────────────────────────────
+//
+// End-to-end contract: applying proposed content via applyDiff with a registry
+// MUST reconcile the per-pair hashes so the next `drift` reports IN_SYNC
+// (not phantom TARGET_CHANGED). Mirrors sync-engine's recordSync hash contract.
+
+describe('diff-apply-registry', () => {
+  let root
+  beforeEach(async () => {
+    root = await makeFixture()
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  // (a) Drifted single-target pair → apply with registry → save → drift IN_SYNC.
+  test('applyDiff with registry reconciles a drifted single-target pair to IN_SYNC', async () => {
+    const oldSection = '- Old decision A\n- Old decision B'
+    const newSection = '- New decision X\n- New decision Y'
+    const constitution = `# Constitution\n\n<!-- specfuse:arch-decisions:start -->\n${oldSection}\n<!-- specfuse:arch-decisions:end -->\n`
+
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), constitution)
+    await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), ARCH_DOC)
+
+    const rule = makeRule(
+      'arch→constitution:arch-decisions',
+      'A',
+      '.specfuse/plan/architecture.md',
+      '.specfuse/constitution.md',
+      'arch-decisions',
+      async () => newSection,
+      (data) => data,
+    )
+
+    // Seed a STALE prior sync record so the on-disk oldSection diverges from it
+    // and drift reports TARGET_CHANGED before the apply. (We record a hash that
+    // does NOT match oldSection — the on-disk content — so tgtChanged is true.)
+    const reg = new Registry(root)
+    await reg.load()
+    reg.recordSync(
+      rule.source,
+      rule.target,
+      hashContent(ARCH_DOC),
+      hashContent('- some other stale content'),
+    )
+    await reg.save()
+
+    // Before apply: drift must report the target changed.
+    const beforeDrift = await checkAllDrift(root, reg, [rule])
+    assert.equal(beforeDrift[0].state, 'TARGET_CHANGED', 'precondition: target must be drifted')
+
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [rule])
+    assert.equal(pairContexts.length, 1, 'one pairContext for the changed section')
+    assert.equal(pairContexts[0].sourceId, rule.source)
+    assert.equal(pairContexts[0].targetId, rule.target)
+
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    assert.equal(applied.length, 1)
+    assert.equal(applied[0].written, true)
+
+    // After apply + save: a fresh drift check MUST report IN_SYNC.
+    const freshReg = new Registry(root)
+    await freshReg.load()
+    const afterDrift = await checkAllDrift(root, freshReg, [rule])
+    assert.equal(afterDrift[0].state, 'IN_SYNC', 'applied pair must be reconciled to IN_SYNC')
+  })
+
+  // (b) Multi-rule-same-file: two sections in one target file → apply → both
+  // pairs recorded (two sync keys) and drift IN_SYNC for both. HIGHEST-RISK case.
+  test('multi-rule-same-file records a per-pair sync entry for every changed section', async () => {
+    const sectionA = 'Content A new'
+    const sectionB = 'Content B new'
+    const constitution = '# Constitution\n'
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), constitution)
+    await writeFile(join(root, '.specfuse', 'plan', 'prd.md'), 'PRD\n')
+    await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), ARCH_DOC)
+
+    const ruleA = makeRule(
+      'src→constitution:section-a',
+      'A',
+      '.specfuse/plan/prd.md',
+      '.specfuse/constitution.md',
+      'section-a',
+      async () => sectionA,
+      (data) => data,
+    )
+    const ruleB = makeRule(
+      'arch→constitution:section-b',
+      'A',
+      '.specfuse/plan/architecture.md',
+      '.specfuse/constitution.md',
+      'section-b',
+      async () => sectionB,
+      (data) => data,
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [ruleA, ruleB])
+
+    // proposedFiles collapses both sections into ONE full-file entry.
+    assert.equal(proposedFiles.size, 1, 'two sections in one file collapse to one proposed entry')
+    // pairContexts carries BOTH pairs (NOT deduped by relPath).
+    assert.equal(pairContexts.length, 2, 'both pairs must carry their own pairContext')
+    const ctxSections = pairContexts.map((c) => c.section).sort()
+    assert.deepEqual(ctxSections, ['section-a', 'section-b'])
+
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    assert.equal(applied.length, 1, 'one file written')
+    assert.equal(applied[0].written, true)
+
+    // Two distinct sync keys recorded — one per pair.
+    assert.ok(reg.data.syncs[`${ruleA.source}→${ruleA.target}`], 'pair A sync recorded')
+    assert.ok(reg.data.syncs[`${ruleB.source}→${ruleB.target}`], 'pair B sync recorded')
+
+    // Both pairs report IN_SYNC after apply.
+    const freshReg = new Registry(root)
+    await freshReg.load()
+    const drift = await checkAllDrift(root, freshReg, [ruleA, ruleB])
+    const states = drift.map((d) => d.state)
+    assert.ok(states.every((s) => s === 'IN_SYNC'), 'both pairs IN_SYNC after apply')
+  })
+
+  // (c) Failed-write isolation: a file that cannot be written must NOT record a
+  // sync for its pairs, while other applied pairs are recorded normally. The
+  // maps are hand-built (mirroring the existing applyDiff error test) so the bad
+  // target's parent-exists-as-a-file failure is isolated to the write phase.
+  test('failed write does not record a sync for that file’s pairs', async () => {
+    const goodRelPath = '.specfuse/plan/good-target.md'
+    const badRelPath = '.specfuse/plan/bad-target.md/impossible.md'
+
+    await mkdir(join(root, '.specfuse', 'plan'), { recursive: true })
+    // bad-target.md exists as a FILE, so writing into it as a directory fails.
+    await writeFile(join(root, '.specfuse', 'plan', 'bad-target.md'), 'I am a file, not a dir')
+
+    const goodSource = '.specfuse/plan/architecture.md'
+    const badSource = '.specfuse/plan/prd.md'
+
+    const proposedFiles = new Map()
+    proposedFiles.set(goodRelPath, `# Good\n\n<!-- specfuse:good-section:start -->\nGood content\n<!-- specfuse:good-section:end -->\n`)
+    proposedFiles.set(badRelPath, 'Cannot write here')
+
+    const pairContexts = [
+      {
+        relPath: goodRelPath,
+        sourceId: goodSource,
+        targetId: goodRelPath,
+        sourceHash: hashContent(ARCH_DOC),
+        targetHash: hashContent('Good content'),
+        section: 'good-section',
+        ruleId: 'arch→good:good-section',
+      },
+      {
+        relPath: badRelPath,
+        sourceId: badSource,
+        targetId: badRelPath,
+        sourceHash: hashContent('PRD\n'),
+        targetHash: hashContent('Bad content'),
+        section: 'bad-section',
+        ruleId: 'src→bad:bad-section',
+      },
+    ]
+
+    const reg = new Registry(root)
+    await reg.load()
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    const goodResult = applied.find((a) => a.file === goodRelPath)
+    const badResult = applied.find((a) => a.file === badRelPath)
+    assert.equal(goodResult.written, true, 'good file written')
+    assert.equal(badResult.written, false, 'bad file must fail to write')
+
+    assert.ok(
+      reg.data.syncs[`${goodSource}→${goodRelPath}`],
+      'good pair recorded',
+    )
+    assert.ok(
+      !reg.data.syncs[`${badSource}→${badRelPath}`],
+      'bad pair must NOT be recorded on a failed write',
+    )
+  })
+
+  // (d) Preview path: applyDiff WITHOUT a registry (or computeDiff without
+  // apply) leaves registry.data.syncs untouched.
+  test('preview path (no registry) leaves the registry untouched', async () => {
+    const newSection = '- New content for preview'
+    const constitution = '# Constitution\n'
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), constitution)
+    await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), ARCH_DOC)
+
+    const rule = makeRule(
+      'arch→constitution:arch-decisions',
+      'A',
+      '.specfuse/plan/architecture.md',
+      '.specfuse/constitution.md',
+      'arch-decisions',
+      async () => newSection,
+      (data) => data,
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+    const syncsBefore = JSON.stringify(reg.data.syncs)
+
+    // computeDiffWithProposed alone must not mutate the registry.
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [rule])
+    assert.equal(JSON.stringify(reg.data.syncs), syncsBefore, 'compute must not touch syncs')
+
+    // applyDiff WITHOUT a registry writes files but records nothing.
+    const applied = await applyDiff(root, proposedFiles, pairContexts)
+    assert.equal(applied[0].written, true)
+    assert.equal(JSON.stringify(reg.data.syncs), syncsBefore, 'apply without registry must not touch syncs')
+  })
+
+  // (e) Single save: a multi-pair apply records every pair but the caller saves
+  // exactly once.
+  test('a multi-pair apply records every pair with a single registry.save()', async () => {
+    const sectionA = 'Content A'
+    const sectionB = 'Content B'
+    await mkdir(join(root, '.specfuse', 'plan'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'plan', 'prd.md'), 'PRD\n')
+    await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), ARCH_DOC)
+
+    // Two rules → two separate target files (two pairs, two writes).
+    const ruleA = makeRule(
+      'src→a:section-a',
+      'A',
+      '.specfuse/plan/prd.md',
+      '.specfuse/plan/target-a.md',
+      'section-a',
+      async () => sectionA,
+      (data) => data,
+    )
+    const ruleB = makeRule(
+      'arch→b:section-b',
+      'A',
+      '.specfuse/plan/architecture.md',
+      '.specfuse/plan/target-b.md',
+      'section-b',
+      async () => sectionB,
+      (data) => data,
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+
+    let saveCalls = 0
+    const origSave = reg.save.bind(reg)
+    reg.save = async () => {
+      saveCalls++
+      return origSave()
+    }
+
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [ruleA, ruleB])
+    assert.equal(pairContexts.length, 2, 'two pairs')
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    assert.equal(applied.length, 2)
+    assert.ok(applied.every((a) => a.written))
+    assert.equal(saveCalls, 1, 'exactly one save across a multi-pair apply')
+    assert.ok(reg.data.syncs[`${ruleA.source}→${ruleA.target}`], 'pair A recorded')
+    assert.ok(reg.data.syncs[`${ruleB.source}→${ruleB.target}`], 'pair B recorded')
+  })
+
+  // (f) Multi-target rule: apply records the pair under 'constitution' →
+  // 'changes:<dir>' and drift reports IN_SYNC.
+  test('multi-target rule records under constitution → changes:<dir> and reaches IN_SYNC', async () => {
+    const headerContent = 'Constitutional header content'
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), '# Constitution\n')
+    await writeFile(
+      join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md'),
+      '# Change Proposal: Add Cart\n',
+    )
+
+    const multiRule = makeRule(
+      'constitution→changes:multi',
+      'B',
+      '.specfuse/constitution.md',
+      '.specfuse/changes/*/proposal.md',
+      'constitution-header',
+      async () => headerContent,
+      (data) => data,
+      {
+        isMultiTarget: true,
+        resolveTargets: async () => {
+          return [join(root, '.specfuse', 'changes', 'add-cart', 'proposal.md')]
+        },
+      },
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [multiRule])
+
+    assert.equal(pairContexts.length, 1, 'one multi-target pair')
+    assert.equal(pairContexts[0].sourceId, 'constitution', 'multi-target sourceId is constitution')
+    assert.equal(pairContexts[0].targetId, 'changes:add-cart', 'multi-target targetId is changes:<dir>')
+
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    assert.equal(applied[0].written, true)
+    assert.ok(
+      reg.data.syncs['constitution→changes:add-cart'],
+      'multi-target pair recorded under constitution → changes:<dir>',
+    )
+
+    // drift-detector's checkMultiTargetDrift must report IN_SYNC.
+    const freshReg = new Registry(root)
+    await freshReg.load()
+    const drift = await checkAllDrift(root, freshReg, [multiRule])
+    assert.equal(drift.length, 1)
+    assert.equal(drift[0].state, 'IN_SYNC', 'multi-target pair IN_SYNC after apply')
+  })
+
+  // First-ever apply on a NEVER_SYNCED pair: recordSync creates the first entry
+  // and drift goes NEVER_SYNCED → IN_SYNC (no prior getLastSync required).
+  test('first-ever apply on a NEVER_SYNCED pair creates the initial sync entry', async () => {
+    const newSection = '- First ever content'
+    const constitution = '# Constitution\n'
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), constitution)
+    await writeFile(join(root, '.specfuse', 'plan', 'architecture.md'), ARCH_DOC)
+
+    const rule = makeRule(
+      'arch→constitution:arch-decisions',
+      'A',
+      '.specfuse/plan/architecture.md',
+      '.specfuse/constitution.md',
+      'arch-decisions',
+      async () => newSection,
+      (data) => data,
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+    // No prior sync record → NEVER_SYNCED before apply.
+    const beforeDrift = await checkAllDrift(root, reg, [rule])
+    assert.equal(beforeDrift[0].state, 'NEVER_SYNCED', 'precondition: never synced')
+
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [rule])
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+
+    assert.equal(applied[0].written, true)
+    const freshReg = new Registry(root)
+    await freshReg.load()
+    const afterDrift = await checkAllDrift(root, freshReg, [rule])
+    assert.equal(afterDrift[0].state, 'IN_SYNC', 'never-synced pair becomes IN_SYNC after apply')
+  })
+
+  // Source-is-a-directory: sourceHash must hash `dir:<rule.source>` so it aligns
+  // with drift-detector's sourceIsDir branch (no SOURCE_CHANGED phantom drift).
+  test('directory source hashes dir:<source> so drift reports IN_SYNC after apply', async () => {
+    const newSection = '- Stories index content'
+    const constitution = '# Constitution\n'
+    await mkdir(join(root, '.specfuse'), { recursive: true })
+    await writeFile(join(root, '.specfuse', 'constitution.md'), constitution)
+    // A directory source (stories/).
+    await mkdir(join(root, 'stories'), { recursive: true })
+    await writeFile(join(root, 'stories', 's1.md'), '# Story 1\n')
+
+    const rule = makeRule(
+      'stories→constitution:stories-index',
+      'A',
+      'stories',
+      '.specfuse/constitution.md',
+      'stories-index',
+      async () => newSection,
+      (data) => data,
+    )
+
+    const reg = new Registry(root)
+    await reg.load()
+    const { proposedFiles, pairContexts } = await computeDiffWithProposed(root, [rule])
+
+    // sourceHash must match hashContent('dir:stories') — the same value
+    // drift-detector computes for a directory source.
+    assert.equal(
+      pairContexts[0].sourceHash,
+      hashContent('dir:stories'),
+      'directory source must hash dir:<source>',
+    )
+
+    const applied = await applyDiff(root, proposedFiles, pairContexts, reg)
+    await reg.save()
+    assert.equal(applied[0].written, true)
+
+    const freshReg = new Registry(root)
+    await freshReg.load()
+    const drift = await checkAllDrift(root, freshReg, [rule])
+    assert.equal(drift[0].state, 'IN_SYNC', 'directory-source pair IN_SYNC (no SOURCE_CHANGED phantom)')
   })
 })
