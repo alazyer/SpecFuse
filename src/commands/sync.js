@@ -84,9 +84,7 @@ export async function syncCommand(projectRoot, options = {}) {
       const registry = new Registry(projectRoot)
       await registry.load()
       const driftResults = await checkAllDrift(projectRoot, registry, selectedRules)
-      const conflicted = driftResults
-        .filter((r) => r.state === 'BOTH_CHANGED')
-        .map((r) => r.ruleId)
+      const conflicted = driftResults.filter((r) => r.state === 'BOTH_CHANGED').map((r) => r.ruleId)
 
       if (conflicted.length) {
         const guide = `Re-run with --choice source|target|skip to resolve non-interactively.`
@@ -102,9 +100,7 @@ export async function syncCommand(projectRoot, options = {}) {
             ),
           )
         } else {
-          logger.error(
-            `${conflicted.length} rule(s) have unresolved BOTH_CHANGED conflicts:`,
-          )
+          logger.error(`${conflicted.length} rule(s) have unresolved BOTH_CHANGED conflicts:`)
           for (const id of conflicted) {
             logger.row(`  ${id}`, '', chalk.bold)
           }
