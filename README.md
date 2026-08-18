@@ -311,6 +311,50 @@ Do not edit inside those markers directly. Put custom content outside them.
 - `NEVER_SYNCED`
 - `SOURCE_MISSING`
 
+## Resolving conflicts
+
+A `BOTH_CHANGED` pair (both the source and the managed target drifted since the
+last sync) must be resolved before it can sync. Resolution can be interactive
+(the default in a TTY) or non-interactive (for CI and automation).
+
+### Non-interactive `--choice`
+
+Resolve or sync a conflict without prompting by passing
+`--choice source|target|skip`:
+
+```
+specfuse resolve <rule> --choice source        # accept the re-extracted content
+specfuse resolve <rule> --choice target        # keep the current managed section
+specfuse resolve <rule> --choice skip          # leave the pair conflicted
+specfuse sync --resolve --choice target        # apply the choice to every conflict
+specfuse sync --resolve --choice skip          # apply safe pairs, leave conflicts
+```
+
+`--choice` is non-interactive and overrides the TTY prompt. Bare
+`sync --choice` auto-implies `--resolve` (passing a choice is unambiguous intent
+to resolve). `skip` applies the safe (non-conflicted) pairs and leaves the
+conflicted ones in `BOTH_CHANGED` for later review.
+
+### CI fail-fast
+
+In a non-interactive context (no TTY, or `CI=1` set) with no `--choice`, a
+conflict aborts the run with a non-zero exit code that names the conflicted
+rule(s) and suggests `--choice` — it never hangs waiting on stdin. `sync` aborts
+before mutating anything (a pre-scan enumerates `BOTH_CHANGED` rules up front),
+so a failed run leaves the registry and targets untouched.
+
+### `--inspect`
+
+Use `--inspect` to print structured conflict data (source/target content and a
+unified diff) and exit 0 without applying anything — useful for piping conflict
+state into another tool:
+
+```
+specfuse resolve <rule> --inspect
+```
+
+`--inspect` and `--choice` are mutually exclusive (inspect never applies).
+
 ## Programmatic API
 
 SpecFuse also exports a small API:
