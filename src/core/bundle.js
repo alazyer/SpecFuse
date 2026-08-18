@@ -9,8 +9,8 @@
  * plus the serialized artifact files.
  */
 
-import { join, relative, dirname, basename } from 'path'
-import { writeFile, readFile, mkdir, rm, readdir, stat } from 'fs/promises'
+import { join, resolve as resolvePath, relative, dirname, basename, isAbsolute } from 'path'
+import { writeFile, readFile, mkdir, rm, readdir, stat, lstat, realpath } from 'fs/promises'
 import { existsSync, createWriteStream as createWriteStreamRaw } from 'fs'
 import { createRequire } from 'module'
 import archiver from 'archiver'
@@ -162,6 +162,13 @@ export async function inspectBundle(bundlePath) {
       }
 
       zipfile.readEntry()
+      zipfile.on('error', (zipErr) => {
+        // yauzl emits stream errors (e.g. "invalid relative path" for an
+        // entry containing `..` traversal) on this event, not through the open
+        // callback. Surface them as a BundleValidationError so a malicious
+        // bundle is rejected cleanly rather than crashing the import.
+        reject(new BundleValidationError(`Bundle stream error: ${zipErr.message}`, { cause: zipErr }))
+      })
       zipfile.on('entry', (entry) => {
         files.push(entry.fileName)
 
@@ -440,6 +447,132 @@ async function _writeZip(projectRoot, files, manifest, outputPath) {
   })
 }
 
+/** Path separator split that tolerates both / and \ (cross-platform zips). */
+const sepPattern = /[\\/]+/
+
+/**
+ * lstat that returns null for a missing path (ENOENT) rather than throwing.
+ * @param {string} p
+ * @returns {Promise<import('fs').Stats | null>}
+ */
+async function lstatSafe(p) {
+  try {
+    return await lstat(p)
+  } catch (err) {
+    if (err.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+/**
+ * realpath that returns the input path on failure (best-effort). Used only after
+ * an lstat confirmed the target is a symlink, so ENOENT is not expected here.
+ * @param {string} p
+ * @returns {Promise<string>}
+ */
+async function realpathSafe(p) {
+  try {
+    return await realpath(p)
+  } catch {
+    // If realpath fails (e.g. dangling symlink), treat the link target as the
+    // path itself — the lstat already proved a symlink exists, so a dangling
+    // link is itself suspicious; fall back to rejecting conservatively below.
+    return p
+  }
+}
+
+/**
+ * Resolve a bundle entry's path against the extraction root, rejecting any
+ * entry that escapes the root via `..` traversal, an absolute path, or a
+ * symlinked intermediate/leaf directory pointing outside the root.
+ *
+ * This is the single zip-slip / path-traversal containment primitive. Every
+ * extraction write site MUST route its target path through this helper before
+ * any `ensureDir` / `writeFileAtomic` / `createWriteStreamRaw` call.
+ *
+ * Algorithm (per design.md §5, with the leaf-symlink requirement from the spec):
+ *  1. Reject absolute entry names (`/etc/passwd`, `C:\...`).
+ *  2. Compute `resolved = path.resolve(root, entryName)` and `resolvedRoot`.
+ *  3. Reject if `relative(resolvedRoot, resolved)` starts with `..` or is
+ *     absolute — the name does not resolve inside the root.
+ *  4. Reject if any intermediate segment is a symlink whose realpath escapes
+ *     `resolvedRoot` (covers a symlinked directory redirecting a write).
+ *  5. Reject if the resolved leaf already exists as a symlink whose realpath
+ *     escapes `resolvedRoot` — the leaf name is inside the root, but the write
+ *     would follow the symlink out.
+ *
+ * Uses `path` primitives throughout so platform separators normalize; zip entry
+ * names use forward slashes which `path.resolve` handles on every platform.
+ *
+ * @param {string} root - Absolute extraction root (projectRoot).
+ * @param {string} entryName - Zip entry fileName, relative to the root.
+ * @returns {string} The validated absolute path inside `root`.
+ * @throws {BundleValidationError} If the entry escapes the root. The error
+ *   message names the offending entry and escaped target; `entryName` and
+ *   `escapedTarget` are also on the instance for `instanceof` consumers.
+ */
+export async function resolveSafeExtractionPath(root, entryName) {
+  const resolvedRoot = resolvePath(root)
+
+  // 1. Absolute entry names bypass the root entirely.
+  if (isAbsolute(entryName)) {
+    throw new BundleValidationError(
+      `Bundle entry "${entryName}" uses an absolute path, which is not allowed (would write outside the extraction root).`,
+      { entryName, escapedTarget: entryName },
+    )
+  }
+
+  const resolved = resolvePath(resolvedRoot, entryName)
+
+  // 2. The resolved name must be equal to or a child of the root.
+  const rel = relative(resolvedRoot, resolved)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new BundleValidationError(
+      `Bundle entry "${entryName}" resolves outside the extraction root to "${resolved}" — path traversal is not allowed.`,
+      { entryName, escapedTarget: resolved },
+    )
+  }
+
+  // 3. Walk every intermediate directory segment and reject a symlink whose
+  //    realpath escapes the root. Intermediate dirs that don't yet exist are
+  //    fine (we create them); a symlinked intermediate that already exists and
+  //    points outward is not.
+  const segments = rel ? rel.split(sepPattern) : []
+  let current = resolvedRoot
+  for (let i = 0; i < segments.length; i++) {
+    current = join(current, segments[i])
+    const info = await lstatSafe(current)
+    if (info?.isSymbolicLink()) {
+      const real = await realpathSafe(current)
+      const realRel = relative(resolvedRoot, real)
+      if (realRel.startsWith('..') || isAbsolute(realRel)) {
+        throw new BundleValidationError(
+          `Bundle entry "${entryName}" crosses a symlink ("${segments[i]}") that resolves outside the extraction root to "${real}".`,
+          { entryName, escapedTarget: real },
+        )
+      }
+    }
+  }
+
+  // 4. The leaf itself: if it already exists as a symlink, its realpath must
+  //    stay inside the root. A leaf symlink to e.g. /etc/passwd passes the name
+  //    check above (the leaf name is inside the root) but the write would
+  //    follow it out — reject it. (Spec requirement; not optional.)
+  const leafInfo = await lstatSafe(resolved)
+  if (leafInfo?.isSymbolicLink()) {
+    const real = await realpathSafe(resolved)
+    const realRel = relative(resolvedRoot, real)
+    if (realRel.startsWith('..') || isAbsolute(realRel)) {
+      throw new BundleValidationError(
+        `Bundle entry "${entryName}" targets a leaf symlink that resolves outside the extraction root to "${real}".`,
+        { entryName, escapedTarget: real },
+      )
+    }
+  }
+
+  return resolved
+}
+
 /**
  * Extract a bundle, applying merge/replace and conflict strategies.
  */
@@ -456,116 +589,153 @@ async function _extractBundle(bundlePath, projectRoot, manifest, { merge, replac
 
       let pending = 0
       let done = false
+      let aborted = false
 
       function checkDone() {
-        if (done && pending === 0) {
+        if (!aborted && done && pending === 0) {
           resolve(report)
         }
       }
 
+      // Single point of failure: once the extraction aborts (a malicious entry,
+      // a stream error, or a write failure), resolve must never fire and every
+      // later reject is a no-op. This closes the resolve/reject race that
+      // otherwise lets a late `done`+`pending===0` resolve an incomplete report
+      // after a malicious entry has already rejected.
+      function fail(err) {
+        if (aborted) return
+        aborted = true
+        reject(err)
+      }
+
       zipfile.readEntry()
-      zipfile.on('entry', (entry) => {
-        if (entry.fileName === BUNDLE_MANIFEST) {
-          zipfile.readEntry()
-          return
-        }
+      zipfile.on('error', (zipErr) => {
+        // yauzl emits stream errors (e.g. "invalid relative path" for an
+        // entry containing `..` traversal) on this event, not through the
+        // open callback. Surface them as a BundleValidationError so a malicious
+        // entry aborts the import cleanly instead of crashing the process.
+        fail(new BundleValidationError(`Bundle stream error: ${zipErr.message}`, { cause: zipErr }))
+      })
+      zipfile.on('entry', async (entry) => {
+        if (aborted) return
+        try {
+          if (entry.fileName === BUNDLE_MANIFEST) {
+            zipfile.readEntry()
+            return
+          }
 
-        // Handle directories — just create them
-        if (entry.fileName.endsWith('/')) {
-          ensureDir(join(projectRoot, entry.fileName)).then(() => zipfile.readEntry())
-          return
-        }
+          // Handle directories — just create them. Resolve the contained path
+          // before ensureDir so a traversal entry is rejected synchronously
+          // rather than creating directories outside the root.
+          if (entry.fileName.endsWith('/')) {
+            const safeDir = await resolveSafeExtractionPath(projectRoot, entry.fileName)
+            ensureDir(safeDir).then(() => zipfile.readEntry()).catch((err) => fail(err))
+            return
+          }
 
-        const targetPath = join(projectRoot, entry.fileName)
+          // Validate the entry path before any write. All write sites below
+          // (constitution branch, default branch) reuse this validated path.
+          const targetPath = await resolveSafeExtractionPath(projectRoot, entry.fileName)
 
-        // Handle constitution specially
-        if (entry.fileName === '.specfuse/constitution.md') {
-          pending++
-          zipfile.openReadStream(entry, (err2, readStream) => {
-            if (err2) {
-              pending--
-              checkDone()
-              zipfile.readEntry()
-              return
-            }
-
-            const chunks = []
-            readStream.on('data', (chunk) => chunks.push(chunk))
-            readStream.on('end', async () => {
-              const importedContent = Buffer.concat(chunks).toString('utf8')
-
-              if (replace) {
-                await ensureDir(dirname(targetPath))
-                await writeFileAtomic(targetPath, importedContent)
-                report.imported.push(entry.fileName)
-                report.constitution = 'replaced'
-              } else if (merge) {
-                const localContent = await readFileSafe(targetPath) || ''
-                const merged = _mergeConstitution(localContent, importedContent, manifest.projectName)
-                await ensureDir(dirname(targetPath))
-                await writeFileAtomic(targetPath, merged)
-                report.imported.push(entry.fileName)
-                report.constitution = 'merged'
-              }
-
-              pending--
-              checkDone()
-              zipfile.readEntry()
-            })
-          })
-          return
-        }
-
-        // Handle change directories with conflict strategy
-        if (entry.fileName.startsWith('.specfuse/changes/') && !entry.fileName.startsWith('.specfuse/changes/archive/')) {
-          const changeName = _extractChangeName(entry.fileName)
-          if (changeName) {
-            if (preexistingChanges.has(changeName)) {
-              const strategy = conflict || 'skip'
-              if (strategy === 'skip') {
-                report.skipped.push(entry.fileName)
+          // Handle constitution specially
+          if (entry.fileName === '.specfuse/constitution.md') {
+            pending++
+            zipfile.openReadStream(entry, (err2, readStream) => {
+              if (err2) {
+                pending--
+                checkDone()
                 zipfile.readEntry()
                 return
-              } else if (strategy === 'rename') {
-                const ts = Date.now()
-                const newName = `${changeName}-imported-${ts}`
-                const renamedPath = entry.fileName.replace(changeName, newName)
-                pending++
-                _extractEntry(zipfile, entry, join(projectRoot, renamedPath), (extracted) => {
-                  if (extracted) {
-                    report.imported.push(renamedPath)
-                    report.renamed.push({ original: entry.fileName, renamed: renamedPath })
-                  }
-                  pending--
-                  checkDone()
-                  zipfile.readEntry()
-                })
-                return
               }
-              // strategy === 'overwrite' → fall through to default extraction
+
+              const chunks = []
+              readStream.on('data', (chunk) => chunks.push(chunk))
+              readStream.on('end', async () => {
+                try {
+                  const importedContent = Buffer.concat(chunks).toString('utf8')
+
+                  if (replace) {
+                    await ensureDir(dirname(targetPath))
+                    await writeFileAtomic(targetPath, importedContent)
+                    report.imported.push(entry.fileName)
+                    report.constitution = 'replaced'
+                  } else if (merge) {
+                    const localContent = await readFileSafe(targetPath) || ''
+                    const merged = _mergeConstitution(localContent, importedContent, manifest.projectName)
+                    await ensureDir(dirname(targetPath))
+                    await writeFileAtomic(targetPath, merged)
+                    report.imported.push(entry.fileName)
+                    report.constitution = 'merged'
+                  }
+                } catch (err) {
+                  fail(err)
+                  return
+                }
+
+                pending--
+                checkDone()
+                zipfile.readEntry()
+              })
+            })
+            return
+          }
+
+          // Handle change directories with conflict strategy
+          if (entry.fileName.startsWith('.specfuse/changes/') && !entry.fileName.startsWith('.specfuse/changes/archive/')) {
+            const changeName = _extractChangeName(entry.fileName)
+            if (changeName) {
+              if (preexistingChanges.has(changeName)) {
+                const strategy = conflict || 'skip'
+                if (strategy === 'skip') {
+                  report.skipped.push(entry.fileName)
+                  zipfile.readEntry()
+                  return
+                } else if (strategy === 'rename') {
+                  const ts = Date.now()
+                  const newName = `${changeName}-imported-${ts}`
+                  const renamedPath = entry.fileName.replace(changeName, newName)
+                  // Re-validate the renamed path: a pre-existing `..` outside
+                  // the change-name segment survives String.prototype.replace.
+                  const safeRenamedPath = await resolveSafeExtractionPath(projectRoot, renamedPath)
+                  pending++
+                  _extractEntry(zipfile, entry, safeRenamedPath, (extracted) => {
+                    if (extracted) {
+                      report.imported.push(renamedPath)
+                      report.renamed.push({ original: entry.fileName, renamed: renamedPath })
+                    }
+                    pending--
+                    checkDone()
+                    zipfile.readEntry()
+                  })
+                  return
+                }
+                // strategy === 'overwrite' → fall through to default extraction
+              }
             }
           }
-        }
 
-        // Handle registry.json — skip, we merge selectively
-        if (entry.fileName === '.specfuse/registry.json') {
-          report.skipped.push(entry.fileName)
-          zipfile.readEntry()
-          return
-        }
-
-        // Default: extract file
-        pending++
-        _extractEntry(zipfile, entry, targetPath, (extracted) => {
-          if (extracted) {
-            report.imported.push(entry.fileName)
-          } else {
+          // Handle registry.json — skip, we merge selectively
+          if (entry.fileName === '.specfuse/registry.json') {
             report.skipped.push(entry.fileName)
+            zipfile.readEntry()
+            return
           }
-          pending--
-          checkDone()
-          zipfile.readEntry()
-        })
+
+          // Default: extract file
+          pending++
+          _extractEntry(zipfile, entry, targetPath, (extracted) => {
+            if (extracted) {
+              report.imported.push(entry.fileName)
+            } else {
+              report.skipped.push(entry.fileName)
+            }
+            pending--
+            checkDone()
+            zipfile.readEntry()
+          })
+        } catch (err) {
+          fail(err)
+        }
       })
 
       zipfile.on('end', () => {

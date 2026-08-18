@@ -142,16 +142,24 @@ export class BundleVersionMismatchError extends BundleError {
 
 /**
  * Thrown when a bundle fails validation (missing files, corrupt zip, etc.).
+ *
+ * Also thrown when a bundle entry attempts to escape the extraction root
+ * (zip-slip / path traversal). The offending `entryName` and the
+ * `escapedTarget` it would have written to are carried on the instance for
+ * programmatic `instanceof` consumers. Because the CLI renders only
+ * `err.message`, both values are baked into the message string at throw time.
  */
 export class BundleValidationError extends BundleError {
   /**
    * @param {string} message
-   * @param {{ missingFiles?: string[], cause?: Error }} [options]
+   * @param {{ missingFiles?: string[], entryName?: string, escapedTarget?: string, cause?: Error }} [options]
    */
   constructor(message, options = {}) {
     super(message, { cause: options.cause })
     this.name = 'BundleValidationError'
     this.missingFiles = options.missingFiles ?? null
+    this.entryName = options.entryName ?? null
+    this.escapedTarget = options.escapedTarget ?? null
   }
 }
 
