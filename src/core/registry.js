@@ -399,7 +399,7 @@ export class Registry {
   }
 
   async save() {
-    if (!this.data) throw new Error('Registry not loaded.')
+    if (!this.data) throw new RegistryError('Registry not loaded.', { category: 'corruption' })
     await ensureDir(join(this.projectRoot, '.specfuse'))
     await writeFileAtomic(this.registryPath, JSON.stringify(this.data, null, 2) + '\n')
   }

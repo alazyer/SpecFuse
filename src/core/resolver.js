@@ -5,6 +5,7 @@ import { upsertManagedSection, hashContent } from '../utils/markdown.js'
 import { resolveConstitutionPath } from './drift-detector.js'
 import { buildRuleContext } from './rule-context.js'
 import { logger } from '../utils/logger.js'
+import { InvalidArgumentError } from '../api/errors.mjs'
 
 /**
  * Compute conflict data for a BOTH_CHANGED drift result.
@@ -47,7 +48,10 @@ export async function applyResolution(rule, driftResult, resolution, projectRoot
   const { type } = resolution
 
   if (!['source', 'target', 'merge'].includes(type)) {
-    throw new Error(`Invalid resolution type: ${type}. Must be 'source', 'target', or 'merge'.`)
+    throw new InvalidArgumentError(`Invalid resolution type: ${type}. Must be 'source', 'target', or 'merge'.`, {
+      argument: 'type',
+      value: type,
+    })
   }
 
   const { ruleId, sourceId, targetId } = driftResult

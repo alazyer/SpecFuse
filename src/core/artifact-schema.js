@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative, resolve } from 'path'
 import { pathExists, readFileSafe, writeFileAtomic } from '../utils/fs.js'
+import { SchemaValidationError, SchemaNotFoundError } from '../api/errors.mjs'
 
 export const DEFAULT_ARTIFACT_SCHEMA_PATH = '.specfuse/artifact-schema.json'
 
@@ -30,14 +31,20 @@ function formatSchemaPath(projectRoot, fullPath) {
 
 function validateInstructionsArray(artifactId, value) {
   if (!Array.isArray(value)) {
-    throw new Error(`artifacts.${artifactId}.instructions must be an array of strings.`)
+    throw new SchemaValidationError(`artifacts.${artifactId}.instructions must be an array of strings.`, {
+      artifactId,
+      field: 'instructions',
+    })
   }
 
   const cleaned = []
   for (let i = 0; i < value.length; i++) {
     const entry = value[i]
     if (typeof entry !== 'string') {
-      throw new Error(`artifacts.${artifactId}.instructions[${i}] must be a string.`)
+      throw new SchemaValidationError(`artifacts.${artifactId}.instructions[${i}] must be a string.`, {
+        artifactId,
+        field: `instructions[${i}]`,
+      })
     }
     const trimmed = entry.trim()
     if (trimmed) cleaned.push(trimmed)
@@ -48,18 +55,26 @@ function validateInstructionsArray(artifactId, value) {
 function normalizeArtifacts(artifacts) {
   if (artifacts === null || artifacts === undefined) return {}
   if (typeof artifacts !== 'object' || Array.isArray(artifacts)) {
-    throw new Error('artifacts must be an object keyed by artifact ID.')
+    throw new SchemaValidationError('artifacts must be an object keyed by artifact ID.', {
+      artifactId: null,
+      field: 'artifacts',
+    })
   }
 
   const normalized = {}
   for (const [artifactId, config] of Object.entries(artifacts)) {
-    if (!artifactId.trim()) throw new Error('artifact ID keys cannot be empty.')
+    if (!artifactId.trim()) {
+      throw new SchemaValidationError('artifact ID keys cannot be empty.', { field: 'artifactId' })
+    }
     if (Array.isArray(config)) {
       normalized[artifactId] = validateInstructionsArray(artifactId, config)
       continue
     }
     if (typeof config !== 'object' || config === null || config === undefined) {
-      throw new Error(`artifacts.${artifactId} must be an object or string array.`)
+      throw new SchemaValidationError(`artifacts.${artifactId} must be an object or string array.`, {
+        artifactId,
+        field: artifactId,
+      })
     }
     normalized[artifactId] = validateInstructionsArray(artifactId, config.instructions ?? [])
   }
@@ -75,7 +90,7 @@ export async function loadArtifactSchema(projectRoot, options = {}) {
   const displayPath = formatSchemaPath(projectRoot, fullPath)
   if (!pathExists(fullPath)) {
     if (options.requireExists) {
-      throw new Error(`Artifact schema not found: ${displayPath}`)
+      throw new SchemaNotFoundError(`Artifact schema not found: ${displayPath}`, { path: displayPath })
     }
     return { path: fullPath, displayPath, exists: false, version: 1, artifacts: {} }
   }
@@ -85,16 +100,23 @@ export async function loadArtifactSchema(projectRoot, options = {}) {
   try {
     parsed = JSON.parse(raw ?? '{}')
   } catch (err) {
-    throw new Error(`Invalid JSON in ${displayPath}: ${err.message}`)
+    throw new SchemaValidationError(`Invalid JSON in ${displayPath}: ${err.message}`, {
+      path: displayPath,
+      field: 'json',
+      cause: err,
+    })
   }
 
   if (typeof parsed !== 'object' || parsed === null || parsed === undefined || Array.isArray(parsed)) {
-    throw new Error(`${displayPath} must contain a JSON object.`)
+    throw new SchemaValidationError(`${displayPath} must contain a JSON object.`, { field: 'root' })
   }
 
   const version = parsed.version ?? 1
   if (version !== 1) {
-    throw new Error(`${displayPath} uses unsupported version '${version}'. Expected version 1.`)
+    throw new SchemaValidationError(`${displayPath} uses unsupported version '${version}'. Expected version 1.`, {
+      field: 'version',
+      value: version,
+    })
   }
 
   const artifacts = normalizeArtifacts(parsed.artifacts)

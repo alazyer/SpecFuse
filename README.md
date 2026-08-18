@@ -321,6 +321,27 @@ import { sync, drift, diff, status, phase } from 'specfuse/api.mjs';
 
 This is useful for editor tooling, automation, or custom orchestration.
 
+### Typed errors
+
+All API functions throw subclasses of `SpecFuseApiError` (never plain `Error`), so
+consumers can discriminate failure modes by type:
+
+```js
+import { sync, resolve, ArtifactNotFoundError, InvalidArgumentError } from 'specfuse/api.mjs';
+
+try {
+  await resolve({ root, ruleId: 'no-such-rule', choice: 'source' });
+} catch (err) {
+  if (err instanceof InvalidArgumentError) { /* bad/missing argument */ }
+  else if (err instanceof ArtifactNotFoundError) { /* rule or artifact missing */ }
+}
+```
+
+`SpecFuseApiError extends Error`, so `instanceof Error` and `.message` access keep
+working — only the thrown type becomes more specific. The full hierarchy
+(`SchemaValidationError`, `RegistryError`, `CiUnsupportedModeError`, …) is exported
+from `specfuse/api.mjs`.
+
 ## Development
 
 Run locally with pnpm:

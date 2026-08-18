@@ -95,6 +95,29 @@ export class SchemaNotFoundError extends SpecFuseApiError {
 }
 
 /**
+ * Thrown when an artifact schema's *content* is malformed (wrong shape, bad
+ * field type, unsupported version, unparseable JSON). Distinct from
+ * `SchemaNotFoundError`, which is thrown when the schema *file* is missing.
+ *
+ * `artifactId` and `field` localize the failure (both nullable — a malformed
+ * root object has no artifact ID). Where the schema wraps an underlying parse
+ * error, `cause` carries it so `error.cause` is inspectable.
+ */
+export class SchemaValidationError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ artifactId?: string, field?: string, value?: unknown, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'SchemaValidationError'
+    this.artifactId = options.artifactId ?? null
+    this.field = options.field ?? null
+    this.value = options.value ?? null
+  }
+}
+
+/**
  * Thrown when configuration access or mutation fails.
  */
 export class ConfigError extends SpecFuseApiError {
@@ -194,6 +217,26 @@ export class BatchFilterError extends SpecFuseApiError {
 }
 
 /**
+ * Thrown when an API function receives a bad, missing, or unsupported argument
+ * (e.g. a missing `ruleId`, an invalid `choice`, or an unknown resolution
+ * type). `argument` names the offending parameter and `value` carries the
+ * rejected value when applicable. Distinct from `BatchFilterError`, which is
+ * specific to malformed batch filter patterns.
+ */
+export class InvalidArgumentError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ argument?: string, value?: unknown, cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'InvalidArgumentError'
+    this.argument = options.argument ?? null
+    this.value = options.value ?? null
+  }
+}
+
+/**
  * Thrown when the registry is corrupt, has an unexpected shape, or carries an
  * incompatible schema version that could not be migrated. The offending file is
  * quarantined (renamed aside, never deleted) before a fresh registry is
@@ -277,5 +320,33 @@ export class CiUnsupportedModeError extends SpecFuseApiError {
     this.code = 'CI_UNSUPPORTED_MODE'
     this.supportedMode = options.supportedMode ?? 'github'
     this.requestedMode = options.requestedMode ?? null
+  }
+}
+
+/**
+ * Thrown as a defensive mid-run fallback when a BOTH_CHANGED conflict surfaces
+ * during `executeSync` in a non-interactive context that gave no `--choice`.
+ *
+ * The primary strategy is a pre-scan abort in `syncCommand` that calls
+ * `checkAllDrift` up front and exits non-zero BEFORE `executeSync` mutates
+ * anything. This error is the secondary guard for a conflict that only becomes
+ * detectable mid-run (e.g. a Pass B rule whose constitution changed during
+ * Pass A). When it throws, already-applied safe pairs stay applied; the conflicted
+ * ruleIds are carried on the error so the caller can report which rules were
+ * left unresolved. Mid-run abort is best-effort consistent (see `sync.js`).
+ *
+ * `code` is the stable machine identifier `UNRESOLVED_CONFLICT` and `ruleIds`
+ * lists every conflicted rule encountered.
+ */
+export class UnresolvedConflictError extends SpecFuseApiError {
+  /**
+   * @param {string} message
+   * @param {{ ruleIds?: string[], cause?: Error }} [options]
+   */
+  constructor(message, options = {}) {
+    super(message, { cause: options.cause })
+    this.name = 'UnresolvedConflictError'
+    this.code = 'UNRESOLVED_CONFLICT'
+    this.ruleIds = Array.isArray(options.ruleIds) ? options.ruleIds : []
   }
 }

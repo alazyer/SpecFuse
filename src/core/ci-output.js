@@ -11,6 +11,8 @@
  *   auto    — picks 'github' when GITHUB_ACTIONS env var is set, else 'junit'
  */
 
+import { CiUnsupportedModeError } from '../api/errors.mjs'
+
 // ── GitHub Actions format ───────────────────────────────────────────────────
 
 /**
@@ -84,6 +86,9 @@ function stateToGithubSeverity(state) {
     case 'NEVER_SYNCED':
     case 'SOURCE_MISSING':
       return 'warning'
+    // Sync-result states (lowercase) — `unchanged` is a passing no-op.
+    case 'unchanged':
+      return 'notice'
     default:
       return 'notice'
   }
@@ -183,8 +188,9 @@ export function formatSarif(data, meta = {}) {
   const ruleIndexMap = {}
 
   for (const r of data.results) {
-    // Only non-PASS results go into SARIF
-    if (r.state === 'PASS' || r.state === 'IN_SYNC') continue
+    // Only non-PASS results go into SARIF. `unchanged` (a sync no-op) is
+    // passing and produces no finding, like `PASS`/`IN_SYNC`.
+    if (r.state === 'PASS' || r.state === 'IN_SYNC' || r.state === 'unchanged') continue
 
     // Create a rule entry per unique ID
     if (!(r.id in ruleIndexMap)) {
@@ -260,6 +266,9 @@ function stateToSarifLevel(state) {
     case 'NEVER_SYNCED':
     case 'SOURCE_MISSING':
       return 'warning'
+    // Sync-result states (lowercase) — `unchanged` is a passing no-op.
+    case 'unchanged':
+      return 'note'
     default:
       return 'note'
   }
@@ -299,7 +308,10 @@ export function formatAuto(data, options = {}) {
     case 'sarif':
       return formatSarif(data, options)
     default:
-      throw new Error(`Unknown CI output format: "${format}". Use: github, junit, sarif, auto`)
+      throw new CiUnsupportedModeError(`Unknown CI output format: "${format}". Use: github, junit, sarif, auto`, {
+        requestedMode: format,
+        supportedMode: 'github|junit|sarif|auto',
+      })
   }
 }
 
@@ -314,7 +326,7 @@ function tallyResults(results) {
   let failCount = 0
 
   for (const r of results) {
-    if (r.state === 'PASS' || r.state === 'IN_SYNC') {
+    if (r.state === 'PASS' || r.state === 'IN_SYNC' || r.state === 'unchanged') {
       passCount++
     } else if (r.state === 'FAIL' || r.state === 'BOTH_CHANGED') {
       failCount++

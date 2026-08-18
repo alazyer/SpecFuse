@@ -10,6 +10,7 @@ import { join, dirname, resolve as resolvePath } from 'path'
 import { fileURLToPath } from 'url'
 import { readFile, writeFile, mkdir, readdir, copyFile } from 'fs/promises'
 import { existsSync } from 'fs'
+import { ArtifactNotFoundError } from '../api/errors.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const BUILTIN_TEMPLATES_DIR = join(__dir, '..', '..', 'templates')
@@ -344,7 +345,7 @@ export async function validateAllCustomTemplates(projectRoot) {
 export async function copyTemplate(projectRoot, name, options = {}) {
   const entry = TEMPLATE_NAME_MAP[name]
   if (!entry) {
-    throw new Error(`Unknown template: '${name}'`)
+    throw new ArtifactNotFoundError(`Unknown template: '${name}'`, { artifactType: 'template', name })
   }
 
   // Constitution is inline — must handle specially
@@ -367,7 +368,10 @@ export async function copyTemplate(projectRoot, name, options = {}) {
 
   const srcPath = join(BUILTIN_TEMPLATES_DIR, relPath)
   if (!existsSync(srcPath)) {
-    throw new Error(`Built-in template file not found: ${relPath}`)
+    throw new ArtifactNotFoundError(`Built-in template file not found: ${relPath}`, {
+      artifactType: 'template',
+      path: relPath,
+    })
   }
 
   await mkdir(dirname(destPath), { recursive: true })

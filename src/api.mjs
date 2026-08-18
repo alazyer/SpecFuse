@@ -23,6 +23,9 @@ export { sync, drift, diff, status, phase, resolve } from './api/sync-ops.mjs'
 // Import for default export
 import { sync, drift, diff, status, phase, resolve } from './api/sync-ops.mjs'
 
+// Sync-ops namespace (full surface, including undocumented helpers)
+import * as syncOps from './api/sync-ops.mjs'
+
 // Namespaced CRUD modules
 import * as plan from './api/plan.mjs'
 import * as specify from './api/specify.mjs'
@@ -32,6 +35,13 @@ import * as graph from './api/graph.mjs'
 import * as batch from './api/batch.mjs'
 import * as bundle from './api/bundle.mjs'
 import * as lint from './api/lint.mjs'
+
+// Additional documented API namespaces
+import * as ci from './api/ci.mjs'
+import * as clean from './api/clean.mjs'
+import * as config from './api/config.mjs'
+import * as history from './api/history.mjs'
+import * as template from './api/template.mjs'
 
 // Re-export change as 'change' (keyword-safe — _change import re-exported under the name 'change')
 export { _change as change }
@@ -43,6 +53,7 @@ export {
   ArtifactNotFoundError,
   ChangeNotVerifiedError,
   SchemaNotFoundError,
+  SchemaValidationError,
 } from './api/errors.mjs'
 
 export { GraphEmptyError } from './api/graph.mjs'
@@ -53,9 +64,12 @@ export {
   BundleValidationError,
   ConstitutionConflictError,
   BatchFilterError,
+  RegistryError,
+  RegistryLockedError,
+  InvalidArgumentError,
 } from './api/errors.mjs'
 
-export { plan, specify, schema, batch, graph, bundle, lint }
+export { plan, specify, schema, batch, graph, bundle, lint, ci, clean, config, history, template, syncOps }
 
 export default {
   sync,
@@ -72,4 +86,10 @@ export default {
   graph,
   bundle,
   lint,
+  ci,
+  clean,
+  config,
+  history,
+  template,
+  syncOps,
 }
