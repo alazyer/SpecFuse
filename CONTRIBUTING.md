@@ -25,7 +25,7 @@ Quick summary:
 3. **Make your changes** and commit with a descriptive message
 4. **Run tests and checks** locally:
    ```bash
-   pnpm test
+   pnpm test:coverage
    pnpm lint
    node bin/specfuse.js drift --fail
    ```
@@ -37,7 +37,7 @@ Quick summary:
 ## PR requirements
 
 - **1 approving review** required before merge
-- **CI must pass**: tests + spec drift check
+- **CI must pass**: tests with coverage, lint, and spec drift check
 - **Branch must be up to date** with `main` before merging
 - **Describe the change** clearly in the PR body — what, why, and how
 
@@ -61,17 +61,37 @@ Follow the existing commit history style — see `git log --oneline` for example
 Before submitting a PR:
 
 ```bash
-# Run the test suite
-pnpm test
-
-# Check for spec drift (must pass with --fail)
-node bin/specfuse.js drift --fail
+# Run the test suite with coverage
+pnpm test:coverage
 
 # Lint your code
 pnpm lint
+
+# Check for spec drift (must pass with --fail)
+node bin/specfuse.js drift --fail
 ```
 
 All three must pass. CI runs these same checks, but catching issues locally is faster.
+
+## Coverage gate
+
+CI runs the test suite under `c8` coverage and fails the build if coverage drops below the configured threshold (lines / branches / functions / statements). The threshold is a **ratchet floor** set just below the current baseline, so existing code passes and only regressions fail — it is a floor, not a target.
+
+To check coverage locally:
+
+```bash
+pnpm test:coverage
+```
+
+This prints a per-file coverage table to the terminal and writes an lcov report to `coverage/`. Open `coverage/lcov.info` in an HTML viewer (for example `npx lcov-viewer` or your IDE's coverage extension) to see uncovered lines.
+
+When your change adds tests, coverage rises and the floor can be raised in a follow-up. If a PR lowers coverage below the floor, CI fails — add tests covering the regressed code rather than lowering the threshold.
+
+## Lint gate
+
+CI runs `pnpm lint` (ESLint on `src/`) and fails the build on lint **errors**. Lint warnings remain non-fatal at rollout.
+
+> **Follow-up (not part of the initial gate):** `no-unused-vars` is currently a warning across ~80 instances (some genuine dead code). Escalating it to `"error"` now would block every PR, so it stays a warning until those instances are cleared. Once cleared, the rule will be escalated to error and the lint gate will enforce it. See the `ci-coverage-quality-gate` change proposal for context.
 
 ## Managed sections
 
@@ -91,7 +111,7 @@ If you accidentally edit a managed section, `specfuse drift` will detect the cha
 
 ```bash
 pnpm install
-pnpm test
+pnpm test:coverage
 node bin/specfuse.js --help
 ```
 
