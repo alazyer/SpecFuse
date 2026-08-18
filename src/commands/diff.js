@@ -22,7 +22,7 @@ export async function diffCommand(projectRoot, options = {}) {
   await registry.load()
 
   const rules = await loadRules(projectRoot, { allowPlugins: options.allowPlugins })
-  const { diffs, proposedFiles } = await computeDiffWithProposed(projectRoot, rules)
+  const { diffs, proposedFiles, pairContexts } = await computeDiffWithProposed(projectRoot, rules)
   const filePatches = groupByFile(diffs, proposedFiles, projectRoot)
 
   const hasChanges = diffs.some((d) => d.hasChanges)
@@ -60,9 +60,16 @@ export async function diffCommand(projectRoot, options = {}) {
 
     // If --apply, write the changes first then report
     if (options.apply) {
-      const applied = await applyDiff(projectRoot, proposedFiles)
+      const applied = await applyDiff(projectRoot, proposedFiles, pairContexts, registry)
       out.applied = true
       out.appliedFiles = applied
+      // Reconcile the registry so the next `drift` reports IN_SYNC. Single save
+      // per invocation — this branch exits via process.exit before the others.
+      try {
+        await registry.save()
+      } catch (err) {
+        logger.error(`Registry save failed: ${err.message}`)
+      }
       console.log(JSON.stringify(out, null, 2))
       const allWritten = applied.every((a) => a.written)
       process.exit(allWritten ? 0 : 1)
@@ -82,7 +89,13 @@ export async function diffCommand(projectRoot, options = {}) {
         logger.info('No changes to apply.')
         process.exit(0)
       }
-      const applied = await applyDiff(projectRoot, proposedFiles)
+      const applied = await applyDiff(projectRoot, proposedFiles, pairContexts, registry)
+      // Single registry save — reconciles hashes for every written pair.
+      try {
+        await registry.save()
+      } catch (err) {
+        logger.error(`Registry save failed: ${err.message}`)
+      }
       logger.br()
       logger.header('Applied')
       for (const a of applied) {
@@ -106,7 +119,14 @@ export async function diffCommand(projectRoot, options = {}) {
       process.exit(0)
     }
 
-    const applied = await applyDiff(projectRoot, proposedFiles)
+    const applied = await applyDiff(projectRoot, proposedFiles, pairContexts, registry)
+
+    // Single registry save — reconciles hashes for every written pair.
+    try {
+      await registry.save()
+    } catch (err) {
+      logger.error(`Registry save failed: ${err.message}`)
+    }
 
     // Show file-level summary of what was applied
     logger.header('SpecFuse Diff  v2  —  Apply')
