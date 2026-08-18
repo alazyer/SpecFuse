@@ -145,6 +145,8 @@ specfuse diff
 specfuse drift
 ```
 
+> `specfuse diff --apply` writes the proposed changes **and** reconciles the registry's per-pair hashes, so a separate `specfuse sync` is not needed afterward and the next `specfuse drift` reports `IN_SYNC` for the applied pairs.
+
 ### Pass A
 
 Updates the constitution from:
@@ -276,6 +278,15 @@ Handy aliases:
 - `specfuse change review <name>`
 - `specfuse change verify <name>`
 - `specfuse change archive <name>`
+
+### Bundles
+
+- `specfuse export`
+- `specfuse import <bundle>`
+
+Imported bundles cannot write outside `.specfuse/` — entries that escape the
+extraction root via path traversal, absolute paths, or symlinked intermediate
+directories are rejected and the import aborts.
 
 ## Managed sections
 
