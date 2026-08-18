@@ -91,6 +91,26 @@ export async function listFilesDetailed(dir, ext) {
 }
 
 /**
+ * Determine whether the current process is running in an interactive context.
+ *
+ * Returns `true` ONLY when stdin is a TTY AND no `CI` environment variable is
+ * set. This is the single source of truth for non-interactive detection used by
+ * `resolve` and `sync` to decide between prompting and failing fast.
+ *
+ * `CI=1` wins over a TTY: a CI-tagged shell is treated as non-interactive even
+ * when stdin happens to be a TTY (e.g. a locally-invoked CI runner). This
+ * prevents the prompt path from hanging on stdin that will never answer.
+ *
+ * Pure stdlib check — no I/O, deterministic, safe to call at any time.
+ *
+ * @returns {boolean}
+ */
+export function isInteractive() {
+  if (process.env.CI) return false
+  return process.stdin.isTTY === true
+}
+
+/**
  * Ensure a directory exists.
  * @param {string} dir
  */

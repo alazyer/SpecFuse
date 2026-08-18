@@ -4,6 +4,7 @@ import { checkAllDrift } from '../core/drift-detector.js'
 import { computeConflict } from '../core/resolver.js'
 import { resolve as resolveSyncOp } from '../api/sync-ops.mjs'
 import { logger } from '../utils/logger.js'
+import { isInteractive } from '../utils/fs.js'
 import chalk from 'chalk'
 import { createInterface } from 'readline'
 import { writeFileSync, readFileSync, unlinkSync } from 'fs'
@@ -15,8 +16,16 @@ import { spawnSync } from 'child_process'
 /**
  * Interactive conflict resolution command.
  *
+ * Honors a decision matrix over the conflict path:
+ *  - `--inspect`            → structured conflict JSON, exit 0 (no mutation).
+ *  - `--choice <c>`          → apply source/target, or skip, no prompt.
+ *  - no choice + non-TTY/CI → fail fast (non-zero), suggest `--choice`.
+ *  - no choice + TTY         → existing interactive prompt.
+ * `--json` composes with each cell (structured apply result, or conflict data +
+ * non-zero on an unresolvable conflict in a non-interactive context).
+ *
  * @param {string} projectRoot
- * @param {{ ruleId: string, json?: boolean, root?: string }} options
+ * @param {{ ruleId: string, json?: boolean, choice?: 'source'|'target'|'skip', inspect?: boolean, root?: string }} options
  */
 export async function resolveCommand(projectRoot, options = {}) {
   const ruleId = options.ruleId
@@ -56,6 +65,12 @@ export async function resolveCommand(projectRoot, options = {}) {
     process.exit(1)
   }
 
+  // ── Mutual exclusion: --inspect never applies, --choice does. ──────────────
+  if (options.inspect && options.choice) {
+    logger.error('`--inspect` and `--choice` are mutually exclusive — inspect never applies a resolution.')
+    process.exit(1)
+  }
+
   // Find the rule object (for multi-target rules, use the parent rule)
   const rule = rules.find((r) => ruleId === r.id || ruleId.startsWith(r.id + ':'))
 
@@ -66,13 +81,69 @@ export async function resolveCommand(projectRoot, options = {}) {
 
   const conflict = computeConflict(rule, driftResult)
 
-  // ── JSON mode: output conflict data and exit ────────────────────────────────
-  if (options.json) {
+  // ── (a) --inspect: structured conflict data, exit 0 (no mutation). ──────────
+  if (options.inspect) {
     console.log(JSON.stringify(conflict, null, 2))
     process.exit(0)
   }
 
-  // ── Interactive mode ────────────────────────────────────────────────────────
+  // ── (b) --choice provided: apply without prompting. ────────────────────────
+  if (options.choice) {
+    // `--choice skip` leaves the pair conflicted — no registry mutation.
+    if (options.choice === 'skip') {
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            { ruleId, changed: false, choice: 'skip', message: 'Resolution skipped — pair left in BOTH_CHANGED.' },
+            null,
+            2,
+          ),
+        )
+      } else {
+        logger.header(`Conflict Resolution — ${ruleId}`)
+        logger.br()
+        logger.info(`Skipped — pair left BOTH_CHANGED, no changes written.`)
+        logger.br()
+      }
+      process.exit(0)
+    }
+
+    // source/target: print the diff for review (unless --json), then apply.
+    if (!options.json) {
+      printDiff(ruleId, conflict)
+      logger.br()
+    }
+    const result = await resolveSyncOp({ root: projectRoot, ruleId, choice: options.choice })
+    if (options.json) {
+      console.log(JSON.stringify({ ...result, choice: options.choice }, null, 2))
+    } else {
+      logger.success(result.message)
+    }
+    process.exit(0)
+  }
+
+  // ── (c) no --choice + non-interactive: fail fast (do not hang on stdin). ────
+  if (!isInteractive()) {
+    const guide = `Re-run with --choice source|target|skip, or --inspect for conflict data.`
+    if (options.json) {
+      // Non-interactive --json on an unresolved conflict: structured conflict
+      // data + non-zero exit with guidance (the behavior change from the old
+      // always-exit-0 short-circuit; preserved for a TTY below).
+      console.log(JSON.stringify({ ...conflict, error: `Rule ${ruleId} has an unresolved BOTH_CHANGED conflict. ${guide}` }, null, 2))
+    } else {
+      logger.error(`Rule ${chalk.bold(ruleId)} has an unresolved BOTH_CHANGED conflict.`)
+      logger.info(guide)
+    }
+    process.exit(1)
+  }
+
+  // ── (d) no --choice + interactive (TTY): existing prompt flow. ─────────────
+  // In a TTY, bare --json on a conflict stays exit-0 inspect-like (coordinator
+  // decision 3): emit conflict data and exit 0.
+  if (options.json) {
+    console.log(JSON.stringify(conflict, null, 2))
+    process.exit(0)
+  }
 
   logger.header(`Conflict Resolution — ${ruleId}`)
   logger.br()
@@ -80,19 +151,7 @@ export async function resolveCommand(projectRoot, options = {}) {
   logger.info('Source (re-extracted) vs. Target (current managed section):')
   logger.br()
 
-  // Display the diff with color
-  const diffLines = conflict.patch.split('\n')
-  for (const line of diffLines) {
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      console.log(`  ${chalk.green(line)}`)
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      console.log(`  ${chalk.red(line)}`)
-    } else if (line.startsWith('@@')) {
-      console.log(`  ${chalk.cyan(line)}`)
-    } else {
-      console.log(`  ${chalk.dim(line)}`)
-    }
-  }
+  printDiff(ruleId, conflict)
   logger.br()
 
   logger.info('Choose a resolution:')
@@ -196,6 +255,28 @@ function promptChoice() {
       resolve(answer.trim())
     })
   })
+}
+
+/**
+ * Print a colorized unified diff of the conflict (source vs. target managed
+ * section). Shared by the `--choice` review view and the interactive prompt.
+ *
+ * @param {string} ruleId
+ * @param {{ patch: string }} conflict
+ */
+function printDiff(ruleId, conflict) {
+  const diffLines = conflict.patch.split('\n')
+  for (const line of diffLines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      console.log(`  ${chalk.green(line)}`)
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      console.log(`  ${chalk.red(line)}`)
+    } else if (line.startsWith('@@')) {
+      console.log(`  ${chalk.cyan(line)}`)
+    } else {
+      console.log(`  ${chalk.dim(line)}`)
+    }
+  }
 }
 
 /**

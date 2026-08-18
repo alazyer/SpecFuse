@@ -1,14 +1,17 @@
 import { selectSyncRules, executeSync, tallySyncResults } from '../core/sync-service.js'
 import { loadRules } from '../core/rule-loader.js'
 import { computeConflict, applyResolution } from '../core/resolver.js'
-import { InterruptedSyncPendingError } from '../api/errors.mjs'
+import { checkAllDrift } from '../core/drift-detector.js'
+import { Registry } from '../core/registry.js'
+import { InterruptedSyncPendingError, UnresolvedConflictError } from '../api/errors.mjs'
 import { logger } from '../utils/logger.js'
+import { isInteractive } from '../utils/fs.js'
 import chalk from 'chalk'
 import { createInterface } from 'readline'
 
 /**
  * @param {string} projectRoot
- * @param {{ rules?: string[], allowPlugins?: boolean, force?: boolean, resolve?: boolean, json?: boolean, noRecover?: boolean }} [options]
+ * @param {{ rules?: string[], allowPlugins?: boolean, force?: boolean, resolve?: boolean, choice?: 'source'|'target'|'skip', json?: boolean, noRecover?: boolean }} [options]
  */
 export async function syncCommand(projectRoot, options = {}) {
   // Human-only banner: suppress entirely in --json mode so stdout is pure JSON.
@@ -21,6 +24,14 @@ export async function syncCommand(projectRoot, options = {}) {
       logger.warn('Both --force and --resolve specified — --force takes precedence.')
       logger.br()
     }
+  }
+
+  // Coordinator decision 1: bare `sync --choice` auto-implies `--resolve`.
+  // Passing `--choice source|target|skip` is unambiguous intent to resolve, so
+  // enabling the onConflict path without an explicit `--resolve` is needless
+  // ceremony. `--force` still wins (handled by the engine).
+  if (options.choice && !options.resolve && !options.force) {
+    options.resolve = true
   }
 
   // Rule selection validation happens upfront for CLI UX (error reporting for invalid rule IDs)
@@ -47,54 +58,121 @@ export async function syncCommand(projectRoot, options = {}) {
     }
   }
 
-  // Build the onConflict callback for --resolve mode (CLI-only interactive behavior)
+  // Build the onConflict callback for --resolve mode (CLI-only behavior).
+  // The engine calls onConflict per BOTH_CHANGED pair; what it returns drives
+  // resolution. Branching here implements the conflict-path decision matrix:
+  //  - `--choice` provided → apply non-interactively (no prompt, no stdin read).
+  //  - no `--choice` + interactive → existing per-pair prompt.
+  //  - no `--choice` + non-interactive → pre-scan abort BEFORE executeSync
+  //    (coordinator decision 2); a defensive onConflict throw is the fallback
+  //    for a mid-run conflict the pre-scan could not see (e.g. a Pass B rule
+  //    whose constitution changed during Pass A).
   let onConflict = null
   if (options.resolve && !options.force) {
-    onConflict = async (rule, driftResult) => {
-      const conflict = computeConflict(rule, driftResult)
-
-      logger.header(`Conflict — ${driftResult.ruleId}`)
-      logger.br()
-      logger.info('Source (re-extracted) vs. Target (current managed section):')
-      logger.br()
-
-      const diffLines = conflict.patch.split('\n')
-      for (const line of diffLines) {
-        if (line.startsWith('+') && !line.startsWith('+++')) {
-          console.log(`  ${chalk.green(line)}`)
-        } else if (line.startsWith('-') && !line.startsWith('---')) {
-          console.log(`  ${chalk.red(line)}`)
-        } else if (line.startsWith('@@')) {
-          console.log(`  ${chalk.cyan(line)}`)
-        } else {
-          console.log(`  ${chalk.dim(line)}`)
-        }
+    if (options.choice) {
+      // (a) Non-interactive --choice: apply to every conflicted pair.
+      // source/target → resolution object; skip → null (engine produces
+      // skipped_conflict). No prompt, no stdin read.
+      onConflict = async (_rule, _driftResult) => {
+        if (options.choice === 'skip') return null
+        return { type: options.choice }
       }
-      logger.br()
+    } else if (!isInteractive()) {
+      // (c) Non-interactive, no --choice: pre-scan abort strategy. Enumerate
+      // BOTH_CHANGED ruleIds up front and abort non-zero BEFORE executeSync
+      // mutates anything — guaranteeing zero partial mutations on abort.
+      const registry = new Registry(projectRoot)
+      await registry.load()
+      const driftResults = await checkAllDrift(projectRoot, registry, selectedRules)
+      const conflicted = driftResults
+        .filter((r) => r.state === 'BOTH_CHANGED')
+        .map((r) => r.ruleId)
 
-      logger.info('Choose a resolution:')
-      console.log(
-        `  ${chalk.bold('1')}  Accept source  ${chalk.dim('— overwrite managed section with re-extracted content')}`,
-      )
-      console.log(
-        `  ${chalk.bold('2')}  Keep target   ${chalk.dim('— preserve manual edits inside managed section')}`,
-      )
-      console.log(
-        `  ${chalk.bold('s')}  Skip          ${chalk.dim('— skip this rule and continue sync')}`,
-      )
-      logger.br()
+      if (conflicted.length) {
+        const guide = `Re-run with --choice source|target|skip to resolve non-interactively.`
+        if (options.json) {
+          console.log(
+            JSON.stringify(
+              {
+                error: `${conflicted.length} rule(s) have unresolved BOTH_CHANGED conflicts. ${guide}`,
+                conflictedRules: conflicted,
+              },
+              null,
+              2,
+            ),
+          )
+        } else {
+          logger.error(
+            `${conflicted.length} rule(s) have unresolved BOTH_CHANGED conflicts:`,
+          )
+          for (const id of conflicted) {
+            logger.row(`  ${id}`, '', chalk.bold)
+          }
+          logger.br()
+          logger.info(guide)
+        }
+        process.exit(1)
+      }
 
-      const choice = await promptChoice()
+      // No conflicts detected up front. Install the defensive fallback: a
+      // conflict surfacing only mid-run throws UnresolvedConflictError so the
+      // engine does not hang on stdin. Already-applied safe pairs stay applied;
+      // the marker-based crash-recovery journal reconciles on the next run.
+      onConflict = async (_rule, driftResult) => {
+        throw new UnresolvedConflictError(
+          `Rule ${driftResult.ruleId} has an unresolved BOTH_CHANGED conflict that surfaced mid-run (not present in the pre-scan). ` +
+            `Re-run with --choice source|target|skip to resolve non-interactively.`,
+          { ruleIds: [driftResult.ruleId] },
+        )
+      }
+    } else {
+      // (b) Interactive (TTY), no --choice: existing per-pair prompt.
+      onConflict = async (rule, driftResult) => {
+        const conflict = computeConflict(rule, driftResult)
 
-      if (choice === '1') {
-        return { type: 'source' }
-      } else if (choice === '2') {
-        return { type: 'target' }
-      } else if (choice.toLowerCase() === 's') {
-        return null // skip
-      } else {
-        logger.warn('Invalid choice — skipping this rule.')
-        return null
+        logger.header(`Conflict — ${driftResult.ruleId}`)
+        logger.br()
+        logger.info('Source (re-extracted) vs. Target (current managed section):')
+        logger.br()
+
+        const diffLines = conflict.patch.split('\n')
+        for (const line of diffLines) {
+          if (line.startsWith('+') && !line.startsWith('+++')) {
+            console.log(`  ${chalk.green(line)}`)
+          } else if (line.startsWith('-') && !line.startsWith('---')) {
+            console.log(`  ${chalk.red(line)}`)
+          } else if (line.startsWith('@@')) {
+            console.log(`  ${chalk.cyan(line)}`)
+          } else {
+            console.log(`  ${chalk.dim(line)}`)
+          }
+        }
+        logger.br()
+
+        logger.info('Choose a resolution:')
+        console.log(
+          `  ${chalk.bold('1')}  Accept source  ${chalk.dim('— overwrite managed section with re-extracted content')}`,
+        )
+        console.log(
+          `  ${chalk.bold('2')}  Keep target   ${chalk.dim('— preserve manual edits inside managed section')}`,
+        )
+        console.log(
+          `  ${chalk.bold('s')}  Skip          ${chalk.dim('— skip this rule and continue sync')}`,
+        )
+        logger.br()
+
+        const choice = await promptChoice()
+
+        if (choice === '1') {
+          return { type: 'source' }
+        } else if (choice === '2') {
+          return { type: 'target' }
+        } else if (choice.toLowerCase() === 's') {
+          return null // skip
+        } else {
+          logger.warn('Invalid choice — skipping this rule.')
+          return null
+        }
       }
     }
   }
@@ -144,6 +222,41 @@ export async function syncCommand(projectRoot, options = {}) {
         logger.br()
         logger.info(
           `Re-run ${chalk.cyan('specfuse sync')} to reconcile automatically, or inspect .specfuse/registry.json.`,
+        )
+        logger.br()
+      }
+      process.exit(1)
+    }
+    // Mid-run abort: a conflict surfaced during execution that the pre-scan
+    // could not see (non-interactive, no --choice). Already-applied safe pairs
+    // stay applied; the crash-recovery journal reconciles on the next run.
+    // Mid-run abort is best-effort consistent by design.
+    if (err instanceof UnresolvedConflictError) {
+      if (jsonMode) {
+        console.log = origLog
+        console.log(
+          JSON.stringify(
+            {
+              error: {
+                code: err.code,
+                message: err.message,
+                unresolvedRules: err.ruleIds,
+              },
+            },
+            null,
+            2,
+          ),
+        )
+      } else {
+        logger.br()
+        logger.error('Aborted mid-run: a conflict surfaced that was not present in the pre-scan.')
+        logger.warn(err.message)
+        for (const id of err.ruleIds) {
+          logger.row(`  ${id}`, '', chalk.bold)
+        }
+        logger.br()
+        logger.info(
+          `Already-applied safe pairs remain; re-run ${chalk.cyan('specfuse sync')} with --choice source|target|skip to reconcile.`,
         )
         logger.br()
       }

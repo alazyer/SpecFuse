@@ -498,6 +498,10 @@ const sync = program
   .option('--force', 'Overwrite BOTH_CHANGED pairs without prompting (old behavior)', false)
   .option('--resolve', 'Run interactive resolver for BOTH_CHANGED pairs before continuing', false)
   .option(
+    '--choice <source|target|skip>',
+    'Resolve conflicts non-interactively: source, target, or skip. Implies --resolve (applies the choice to each BOTH_CHANGED pair). Overrides the TTY prompt.',
+  )
+  .option(
     '--no-recover',
     'Decline automatic recovery of an interrupted prior sync (abort with a clear error instead)',
   )
@@ -508,6 +512,7 @@ const sync = program
       allowPlugins: o.allowPlugins,
       force: o.force,
       resolve: o.resolve,
+      choice: o.choice,
       noRecover: o.recover === false, // --no-recover → o.recover === false
       json: o.json,
     }),
@@ -522,6 +527,7 @@ sync.addHelpText(
     '  $ specfuse sync --rule plan:arch→constitution:plan-decisions',
     '  $ specfuse sync --force   # overwrite BOTH_CHANGED pairs',
     '  $ specfuse sync --resolve # resolve conflicts interactively',
+    '  $ specfuse sync --resolve --choice source  # resolve non-interactively',
     '  $ specfuse sync --no-recover  # abort if an interrupted sync is pending',
   ].join('\n'),
 )
@@ -549,8 +555,22 @@ program
   .description('Resolve a BOTH_CHANGED conflict interactively')
   .option(...rootOpt)
   .option('--json', 'Output conflict data as JSON and exit (no interactive prompt)', false)
+  .option(
+    '--choice <source|target|skip>',
+    'Resolve non-interactively: source (accept re-extracted), target (keep managed), or skip (leave conflicted). Overrides the TTY prompt.',
+  )
+  .option(
+    '--inspect',
+    'Print structured conflict data and exit 0 (inspection only, no mutation).',
+    false,
+  )
   .action(async (ruleId, o) =>
-    resolveCommand(resolve(o.root), { ruleId, json: o.json }),
+    resolveCommand(resolve(o.root), {
+      ruleId,
+      json: o.json,
+      choice: o.choice,
+      inspect: o.inspect,
+    }),
   )
 
 // ── validate ─────────────────────────────────────────────────────────────────
