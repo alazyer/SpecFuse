@@ -43,7 +43,10 @@ export const planArchRule = {
     const sections = parts.map(({ heading, content }) =>
       `### From: ${heading}\n\n${ctx.contentToRules(heading, content)}`
     );
-    return `> Auto-synced from \`.specfuse/plan/architecture.md\` by SpecFuse on ${ctx.today()}\n\n${sections.join('\n\n')}`;
+    // No volatile date stamp: the managed section must be byte-identical across
+    // syncs with unchanged sources (see sync-idempotency-deterministic-output).
+    // The authoritative synced timestamp lives in registry.json syncs[].syncedAt.
+    return sections.join('\n\n');
   },
 };
 
@@ -76,7 +79,8 @@ export const planPrdRule = {
     const sections = parts.map(({ heading, content }) =>
       `### From: ${heading}\n\n${ctx.contentToRules(heading, content)}`
     );
-    return `> Auto-synced from \`.specfuse/plan/prd.md\` by SpecFuse on ${ctx.today()}\n\n${sections.join('\n\n')}`;
+    // No volatile date stamp — see planArchRule.transform for rationale.
+    return sections.join('\n\n');
   },
 };
 
@@ -103,6 +107,7 @@ export const planDesignSystemRule = {
     const sections = parts.map(({ heading, content }) =>
       `### From: ${heading}\n\n${ctx.contentToRules(heading, content)}`
     );
-    return `> Auto-synced from \`.specfuse/plan/design/system.md\` by SpecFuse on ${ctx.today()}\n\n${sections.join('\n\n')}`;
+    // No volatile date stamp — see planArchRule.transform for rationale.
+    return sections.join('\n\n');
   },
 };

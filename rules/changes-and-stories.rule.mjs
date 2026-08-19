@@ -52,7 +52,9 @@ export const storiesRule = {
       ...s.ac.map(a => `- ${a.replace(/^-\s*\[[ x]\]\s*/, '')}`),
       '',
     ]);
-    return `> Auto-synced from \`.specfuse/plan/stories/\` by SpecFuse on ${ctx.today()}\n\n${lines.join('\n')}`;
+    // No volatile date stamp — managed section must be byte-identical across
+    // syncs with unchanged sources (see sync-idempotency-deterministic-output).
+    return lines.join('\n');
   },
 };
 
@@ -96,7 +98,8 @@ export const archiveRule = {
     const lines = items.map(i => i.verified
       ? `- [verified ✓] \`${i.name}\`: ${i.summary}`
       : `- [archived, unverified] \`${i.name}\`: ${i.summary}`);
-    return `> Auto-synced from \`.specfuse/changes/archive/\` by SpecFuse on ${ctx.today()}\n\n${lines.join('\n')}`;
+    // No volatile date stamp — see storyRule.transform for rationale.
+    return lines.join('\n');
   },
 };
 
@@ -121,8 +124,7 @@ export const constitutionToChangesRule = {
       .map(s => `### ${s.heading}\n\n${s.content}`)
       .join('\n\n');
     return (
-      `> Constitutional constraints — auto-synced by SpecFuse on ${ctx.today()}\n` +
-      `> Review before implementing this change.\n\n` +
+      `> Constitutional constraints — review before implementing this change.\n\n` +
       sections
     );
   },

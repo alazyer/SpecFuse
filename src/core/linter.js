@@ -36,15 +36,52 @@ export const FIXABLE_RULES = new Set(['trailing-whitespace', 'multiple-blank-lin
 /**
  * Recursively collect all Markdown files under a directory.
  *
+ * Thin wrapper over `collectMarkdownFilesDetailed` that returns only the file
+ * list, preserving the original `string[]` return type for existing callers.
+ *
  * @param {string} dir - Directory to scan
  * @param {string} [baseDir] - Base directory for computing relative paths
  * @returns {Promise<string[]>}  Array of absolute paths
  */
 export async function collectMarkdownFiles(dir, baseDir = dir) {
-  if (!pathExists(dir)) return []
+  const scan = await collectMarkdownFilesDetailed(dir, baseDir)
+  return scan.files
+}
 
-  const entries = await readdir(dir, { withFileTypes: true })
+/**
+ * Recursively collect all Markdown files under a directory, surfacing any
+ * unreadable files or directories as `issues` alongside the collected files.
+ *
+ * Unlike `collectMarkdownFiles`, a directory whose entries cannot be read
+ * (e.g. permission denied) is recorded as an issue rather than throwing, so
+ * the caller (e.g. `lint --fix`) can report what was skipped and continue.
+ *
+ * @param {string} dir - Directory to scan
+ * @param {string} [baseDir] - Base directory for computing relative paths
+ * @returns {Promise<{ files: string[], issues: Array<{ path: string, state: string, error?: string }> }>}
+ */
+export async function collectMarkdownFilesDetailed(dir, baseDir = dir) {
+  let entries = []
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return { files: [], issues: [] }
+    }
+    return {
+      files: [],
+      issues: [
+        {
+          path: dir,
+          state: 'unreadable',
+          error: err?.message ?? 'Unable to read directory.',
+        },
+      ],
+    }
+  }
+
   const files = []
+  const issues = []
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name)
@@ -52,14 +89,15 @@ export async function collectMarkdownFiles(dir, baseDir = dir) {
       // Skip .git, node_modules, etc. — but allow .specfuse
       if (entry.name.startsWith('.') && entry.name !== '.specfuse') continue
       if (entry.name === 'node_modules') continue
-      const nested = await collectMarkdownFiles(fullPath, baseDir)
-      files.push(...nested)
+      const nested = await collectMarkdownFilesDetailed(fullPath, baseDir)
+      files.push(...nested.files)
+      issues.push(...nested.issues)
     } else if (entry.isFile() && /\.md$/i.test(entry.name)) {
       files.push(fullPath)
     }
   }
 
-  return files
+  return { files, issues }
 }
 
 /**
